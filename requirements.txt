@@ -1,0 +1,5 @@
+# Inside ComfyUI nothing extra is needed: ComfyUI already ships torch,
+# numpy, and Pillow. The list below is only for running the standalone
+# test suite and sample renderer outside ComfyUI.
+pillow>=9.0.0
+numpy>=1.24.0

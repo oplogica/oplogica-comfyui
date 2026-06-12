@@ -1,0 +1,23 @@
+{
+  "policy_id": "OPL-PAY-001",
+  "version": "1.0.0",
+  "allowed_actions": [
+    "payment.vendor",
+    "refund.customer"
+  ],
+  "limits": {
+    "max_amount": 5000,
+    "currency": "USD"
+  },
+  "evidence": {
+    "min_items": 2,
+    "max_age_days": 90,
+    "require_source": true
+  },
+  "sensitive_patterns": [
+    "delete",
+    "transfer.external",
+    "credentials"
+  ],
+  "required_approvals": 1
+}

@@ -1,0 +1,162 @@
+{
+  "schema": "oplogica.decision_record.v1",
+  "record_id": "bd86b14a-bcae-4de2-aef1-11c0438882f1",
+  "created_at": "2026-06-12T16:44:33Z",
+  "environment": {
+    "producer": "oplogica-comfyui",
+    "pack_version": "1.0.0"
+  },
+  "task": {
+    "actor": "finops-agent-07",
+    "actor_type": "ai_agent",
+    "action_type": "payment.vendor",
+    "amount": 1840.0,
+    "currency": "USD",
+    "payload": {
+      "vendor": "Acme Cloud",
+      "invoice": "INV-2291"
+    },
+    "risk_hint": "medium",
+    "schema": "oplogica.task.v1",
+    "task_id": "4d8dc754-ccf6-46e8-8b2a-a51370611465",
+    "created_at": "2026-06-12T16:44:33Z",
+    "task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c"
+  },
+  "evidence": {
+    "merkle_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+    "stats": {
+      "item_count": 2,
+      "unique_count": 2,
+      "duplicates_removed": 0,
+      "missing_source_count": 0,
+      "incomplete_count": 0,
+      "stale_count": 0
+    },
+    "items": [
+      {
+        "item_id": "EV-01",
+        "claim": "Invoice INV-2291 issued by Acme Cloud for 1840.00 USD",
+        "source": "https://billing.example.com/INV-2291",
+        "content_sha256": "3cca9a2024587c947ca888ea845e11a6ca6d912519e377a423950c8573b225fc",
+        "content_chars": 93,
+        "excerpt": "Acme Cloud invoice INV-2291. Amount due: 1840.00 USD. Service period: May 2026. Status: open.",
+        "collected_at": "2026-06-12T16:44:33Z",
+        "age_days": 0.0,
+        "fresh": true,
+        "complete": true,
+        "missing": [],
+        "item_hash": "f6cb7b95e555f9223950d3864fe303370bef4afdeb7224a8fe4d2085ec965d00"
+      },
+      {
+        "item_id": "EV-02",
+        "claim": "Active services contract with Acme Cloud covers this invoice",
+        "source": "https://contracts.example.com/ACME-2024-118",
+        "content_sha256": "610694095fe7e0c0f13db61be82bb01e62f09dace5e7a265d34af89ad07f6ca0",
+        "content_chars": 106,
+        "excerpt": "Master services agreement ACME-2024-118, active through 2026-12-31, monthly cloud infrastructure",
+        "collected_at": "2026-06-12T16:44:33Z",
+        "age_days": 0.0,
+        "fresh": true,
+        "complete": true,
+        "missing": [],
+        "item_hash": "d255b20865205f5f60fdcef9b8e29362572651418dec8c05462bed3ecc02bb6a"
+      }
+    ]
+  },
+  "checks": {
+    "policy": {
+      "schema": "oplogica.policy_result.v1",
+      "policy_id": "OPL-PAY-001",
+      "policy_version": "1.0.0",
+      "policy_hash": "aac22e4509e7ae83506637c1c164a7f9c23d4f5f2a4557bad3aae7f6c1581483",
+      "checks": [
+        {
+          "rule": "action_allowed",
+          "passed": true,
+          "detail": "action_type 'payment.vendor' is in allowed_actions",
+          "enforced": true
+        },
+        {
+          "rule": "amount_within_limit",
+          "passed": true,
+          "detail": "amount 1840.0 vs max_amount 5000",
+          "enforced": true
+        },
+        {
+          "rule": "currency_match",
+          "passed": true,
+          "detail": "task currency USD vs policy USD",
+          "enforced": true
+        },
+        {
+          "rule": "evidence_min_items",
+          "passed": true,
+          "detail": "2 unique items vs minimum 2",
+          "enforced": true
+        },
+        {
+          "rule": "evidence_sources_present",
+          "passed": true,
+          "detail": "0 item(s) missing a source reference",
+          "enforced": true
+        },
+        {
+          "rule": "evidence_freshness",
+          "passed": true,
+          "detail": "0 item(s) older than 90 days or undated",
+          "enforced": true
+        },
+        {
+          "rule": "evidence_completeness",
+          "passed": true,
+          "detail": "0 item(s) missing claim or content",
+          "enforced": true
+        },
+        {
+          "rule": "sensitive_action_scan",
+          "passed": true,
+          "detail": "no sensitive patterns matched",
+          "enforced": false
+        }
+      ],
+      "passed": true,
+      "requires_human": true,
+      "evaluated_at": "2026-06-12T16:44:33Z"
+    }
+  },
+  "approvals": [
+    {
+      "schema": "oplogica.approval.v2",
+      "gate": "human_approval_gate.v2",
+      "decision": "APPROVED",
+      "effective_decision": "APPROVED",
+      "downgrade_reason": null,
+      "approver": "m.ibrahim",
+      "note": "Invoice matches contract ACME-2024-118. Amount within policy.",
+      "approved_at": "2026-06-12T16:44:33Z",
+      "bound_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
+      "bound_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "current_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
+      "current_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "expected_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
+      "expected_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "binding_mode": "strict",
+      "task_binding_ok": true,
+      "evidence_binding_ok": true,
+      "binding_ok": true
+    }
+  ],
+  "verdict": {
+    "status": "APPROVED",
+    "reasons": [],
+    "requires_human": true
+  },
+  "scope": "Tamper-evident record. Integrity is not truth: this record does not establish correctness, fairness, or legal sufficiency.",
+  "chain": {
+    "prev_record_hash": "GENESIS"
+  },
+  "integrity": {
+    "record_hash": "5a4c037e7db109a6af149794e11b9aa9c3d8778837db2530d8e1244135815743",
+    "signature": null
+  }
+}

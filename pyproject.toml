@@ -1,0 +1,10 @@
+[project]
+name = "oplogica-comfyui"
+version = "1.0.0"
+description = "Open-source ComfyUI node pack for approval-bound decision records: strict task-and-evidence-bound human approval, sealed hash-chained decision records, HMAC verification, and decision cards."
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = ["Pillow>=9.0", "numpy>=1.23"]
+
+[tool.comfy]
+DisplayName = "Oplogica Decision Records"

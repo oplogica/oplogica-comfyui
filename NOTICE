@@ -1,0 +1,21 @@
+Oplogica ComfyUI Extension
+Copyright (c) 2026 Oplogica Inc.
+
+Licensed under the Apache License, Version 2.0.
+
+This product is designed to run as a custom node pack inside ComfyUI
+(https://github.com/comfyanonymous/ComfyUI), which is a separate project
+distributed under its own license (GPL-3.0). ComfyUI is not included in
+this distribution. See the "Licensing and ComfyUI compatibility" section
+of README.md for details.
+
+Runtime dependencies used by this package (provided by the ComfyUI
+environment, or installed via requirements.txt for standalone testing):
+
+  Pillow (PIL fork)   https://python-pillow.org        MIT-CMU license
+  NumPy               https://numpy.org                BSD 3-Clause license
+  PyTorch (optional,  https://pytorch.org              BSD-style license
+  only inside ComfyUI for IMAGE tensor output)
+
+"Oplogica" and "Oplogica Verify" are names and marks of Oplogica Inc.
+Use of the source code under Apache-2.0 does not grant trademark rights.

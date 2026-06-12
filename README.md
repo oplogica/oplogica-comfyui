@@ -1,3 +1,4 @@
+![Oplogica ComfyUI Extension banner](oplogica-comfyui-banner.jpg)
 # Oplogica ComfyUI Extension
 
 **Version 1.0.0 (initial public release). License: Apache-2.0.**

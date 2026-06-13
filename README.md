@@ -3,7 +3,21 @@
 **Version 1.1.0. License: Apache-2.0.**
 
 Oplogica ComfyUI Extension is an open-source ComfyUI node pack for
-approval-bound decision records. It is an experimental technical release.
+approval-bound decision records. It is an experimental technical release, live-tested in a Windows portable ComfyUI environment.
+
+## Demo video and screenshots
+
+Demo video for v1.1.0 is available in the GitHub Release assets:
+
+[Watch the v1.1.0 demo video](https://github.com/oplogica/oplogica-comfyui/releases/tag/v1.1.0)
+
+### Core decision path
+
+![Core decision path](docs/assets/core-decision-path.png)
+
+### Verification and output path
+
+![Verification and output path](docs/assets/verification-and-output-path.png)
 
 It demonstrates a two-pass review flow where a human approval is bound to:
 

@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Oplogica Passport Verifier</title>
+<!--
+  Oplogica ComfyUI Extension: standalone decision passport verifier.
+  Fully local: no network requests, no external scripts, no tracking.
+  Open this file in any modern browser and load a passport JSON exported
+  by the Passport Exporter node or by:
+      python3 oplogica_core.py passport <ledger.jsonl> -o passport.json
+
+  What it verifies: canonical-body parity, the SHA-256 record hash, the
+  approval bindings (task, evidence, output) against the sealed sections,
+  the chain link to the embedded predecessor, and, if you paste the key,
+  the HMAC-SHA256 signature (integrity plus key possession, not legal
+  non-repudiation). It cannot verify what is not in the passport, and a
+  valid passport does not prove the decision was correct.
+  Scope: Tamper-evident record. Integrity is not truth.
+  License: Apache-2.0. Copyright (c) 2026 Oplogica Inc.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body { background:#0b0f14; color:#e6edf3; font:15px/1.5 -apple-system,
+         "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin:0; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1 { font-size: 22px; letter-spacing: .5px; }
+  h1 .accent { color:#22d3ee; }
+  .sub { color:#8b98a5; margin-top:-6px; }
+  .panel { background:#10161d; border:1px solid #1f2a36; border-radius:10px;
+           padding:18px; margin-top:18px; }
+  textarea { width:100%; min-height:120px; background:#0b1118; color:#cdd9e5;
+             border:1px solid #233140; border-radius:8px; padding:10px;
+             font:13px/1.4 ui-monospace, Consolas, monospace; box-sizing:border-box; }
+  input[type=file], input[type=text] { background:#0b1118; color:#cdd9e5;
+             border:1px solid #233140; border-radius:8px; padding:8px;
+             font:13px ui-monospace, Consolas, monospace; width:100%;
+             box-sizing:border-box; }
+  button { background:#0e7490; color:#fff; border:0; border-radius:8px;
+           padding:10px 18px; font-size:15px; cursor:pointer; margin-top:12px; }
+  button:hover { background:#155e75; }
+  .verdict { font-size:20px; font-weight:700; padding:10px 16px;
+             border-radius:10px; display:inline-block; margin-top:14px; }
+  .ok  { color:#10B981; border:2px solid #10B981; background:#062a21; }
+  .bad { color:#EF4444; border:2px solid #EF4444; background:#2a0f12; }
+  table { width:100%; border-collapse:collapse; margin-top:14px; }
+  td { padding:7px 8px; border-top:1px solid #1f2a36; vertical-align:top; }
+  td.name { font-family:ui-monospace, Consolas, monospace; white-space:nowrap; }
+  .pass { color:#10B981; font-weight:700; }
+  .fail { color:#EF4444; font-weight:700; }
+  .meta { font-family:ui-monospace, Consolas, monospace; font-size:12.5px;
+          color:#8b98a5; word-break:break-all; margin-top:10px; }
+  .footer { color:#5b6772; font-size:13px; margin-top:36px;
+            border-top:1px solid #1f2a36; padding-top:14px; }
+  label { display:block; color:#8b98a5; margin:12px 0 4px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OPLOGICA <span class="accent">PASSPORT VERIFIER</span></h1>
+  <div class="sub">Local verification of a decision passport. No network.
+  No installation.</div>
+
+  <div class="panel">
+    <label>Load a passport file</label>
+    <input type="file" id="file" accept=".json,application/json">
+    <label>Or paste the passport JSON</label>
+    <textarea id="paste" placeholder='{"passport_schema": "oplogica.passport.v1", ...}'></textarea>
+    <label>Optional HMAC key (hex or plain text, only if the record is
+    signed and you hold the key)</label>
+    <input type="text" id="key" placeholder="leave empty to skip signature verification">
+    <button id="run">Verify passport</button>
+  </div>
+
+  <div id="result"></div>
+
+  <div class="footer">
+    A valid result proves internal consistency and, with the key,
+    HMAC-SHA256 integrity plus key possession. It is not legal
+    non-repudiation, it does not authenticate the approver identity, and
+    it does not prove the decision was correct, fair, or legally
+    sufficient.<br><br>
+    Tamper-evident record. Integrity is not truth.
+  </div>
+</div>
+<script>
+"use strict";
+
+async function sha256Hex(str) {
+  const data = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function keyBytes(input) {
+  const s = input.trim();
+  if (/^[0-9a-fA-F]+$/.test(s) && s.length % 2 === 0 && s.length >= 32) {
+    const out = new Uint8Array(s.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+    return out;
+  }
+  return new TextEncoder().encode(s);
+}
+
+async function hmacHex(keyRaw, msg) {
+  const key = await crypto.subtle.importKey("raw", keyRaw,
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(msg));
+  return [...new Uint8Array(sig)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (typeof a === "object") {
+    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+    if (!deepEqual(ka, kb)) return false;
+    return ka.every(k => deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+function bodyOf(record) {
+  const body = {};
+  for (const k of Object.keys(record)) if (k !== "integrity") body[k] = record[k];
+  return body;
+}
+
+async function verify(passport, keyInput) {
+  const checks = [];
+  const add = (name, passed, detail) => checks.push({ name, passed, detail });
+
+  const record = passport.record || {};
+  const bodyStr = passport.record_canonical_body || "";
+  const integ = record.integrity || {};
+  const storedHash = integ.record_hash || "";
+
+  let parsedBody = null;
+  try { parsedBody = JSON.parse(bodyStr); } catch (e) { parsedBody = null; }
+  add("canonical_body_parses", parsedBody !== null,
+      "embedded canonical body is valid JSON");
+  add("canonical_body_matches_record",
+      parsedBody !== null && deepEqual(parsedBody, bodyOf(record)),
+      "embedded canonical body equals the record body field by field");
+  add("record_hash",
+      storedHash.length === 64 && (await sha256Hex(bodyStr)) === storedHash,
+      "SHA-256 of canonical body equals integrity.record_hash");
+
+  const ap = (record.approvals || [{}])[0] || {};
+  add("approval_task_binding",
+      ap.bound_task_hash === ((record.task || {}).task_hash),
+      "approval bound task hash equals sealed task hash");
+  add("approval_evidence_binding",
+      ap.bound_evidence_root === ((record.evidence || {}).merkle_root),
+      "approval bound evidence root equals sealed evidence root");
+  if (ap.bound_output_hash || record.output) {
+    add("approval_output_binding",
+        ap.bound_output_hash === ((record.output || {}).output_hash),
+        "approval bound output hash equals sealed output hash");
+  }
+  if (record.workflow && record.workflow.expected_graph_hash) {
+    add("workflow_structure_binding", record.workflow.match === true,
+        "attested workflow structure matches the expected graph hash");
+  }
+
+  const ctx = passport.chain_context || {};
+  const declaredPrev = (record.chain || {}).prev_record_hash;
+  if (ctx.prev_record) {
+    const prevBody = ctx.prev_record_canonical_body || "";
+    let prevParsed = null;
+    try { prevParsed = JSON.parse(prevBody); } catch (e) { prevParsed = null; }
+    add("prev_canonical_matches",
+        prevParsed !== null && deepEqual(prevParsed, bodyOf(ctx.prev_record)),
+        "embedded predecessor canonical body equals predecessor record");
+    const prevHash = ((ctx.prev_record.integrity || {}).record_hash) || "";
+    add("prev_record_hash",
+        prevHash.length === 64 && (await sha256Hex(prevBody)) === prevHash,
+        "predecessor record hash recomputes");
+    add("chain_link", declaredPrev === prevHash,
+        "record links to the embedded predecessor");
+  } else {
+    add("chain_link", declaredPrev === "GENESIS" || ctx.position === null,
+        "record declares GENESIS or no chain context is embedded");
+  }
+
+  const sig = integ.signature;
+  if (keyInput.trim()) {
+    if (sig && sig.value) {
+      const calc = await hmacHex(keyBytes(keyInput), storedHash);
+      add("hmac_signature", calc === sig.value,
+          "HMAC-SHA256 over the record hash verifies with the provided key");
+    } else {
+      add("hmac_signature", false, "key provided but the record is unsigned");
+    }
+  }
+  return checks;
+}
+
+function render(checks, record) {
+  const valid = checks.every(c => c.passed);
+  const rows = checks.map(c =>
+    `<tr><td class="${c.passed ? "pass" : "fail"}">${c.passed ? "PASS" : "FAIL"}</td>` +
+    `<td class="name">${c.name}</td><td>${c.detail}</td></tr>`).join("");
+  const verdict = (record.verdict || {}).status || "?";
+  const reasons = ((record.verdict || {}).reasons || []).join(", ");
+  document.getElementById("result").innerHTML =
+    `<div class="panel">
+       <span class="verdict ${valid ? "ok" : "bad"}">${valid ? "PASSPORT VALID" : "PASSPORT INVALID"}</span>
+       <table>${rows}</table>
+       <div class="meta">sealed verdict: ${verdict}${reasons ? " | reasons: " + reasons : ""}<br>
+       record: ${((record.integrity || {}).record_hash) || ""}<br>
+       prev: ${((record.chain || {}).prev_record_hash) || ""}</div>
+     </div>`;
+}
+
+document.getElementById("run").addEventListener("click", async () => {
+  let text = document.getElementById("paste").value.trim();
+  const fileEl = document.getElementById("file");
+  if (!text && fileEl.files.length) text = await fileEl.files[0].text();
+  if (!text) {
+    document.getElementById("result").innerHTML =
+      '<div class="panel"><span class="verdict bad">NO PASSPORT LOADED</span></div>';
+    return;
+  }
+  let passport;
+  try { passport = JSON.parse(text); } catch (e) {
+    document.getElementById("result").innerHTML =
+      '<div class="panel"><span class="verdict bad">INVALID JSON</span></div>';
+    return;
+  }
+  const checks = await verify(passport, document.getElementById("key").value);
+  render(checks, passport.record || {});
+});
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Oplogica ComfyUI extension test suite (pack version 1.0.0).
+Oplogica ComfyUI extension test suite (pack version 1.1.0).
 
 Runs with pytest (pytest tests/ -q) or standalone
 (python3 tests/test_oplogica.py). Every test uses plain asserts; the
@@ -65,20 +65,30 @@ def make_policy_result(task, bundle, policy=None):
 
 
 def make_approval(task, bundle, decision="APPROVED", approver="m.ibrahim",
-                  strict_task="", strict_evid="", note=""):
+                  strict_task="", strict_evid="", note="",
+                  strict_output="", output=None):
     node = opl_nodes.OplHumanApprovalGate()
     approval, approved, report = node.run(
         task=task, bundle=bundle, decision=decision, approver=approver,
         note=note, strict_expected_task_hash=strict_task,
-        strict_expected_evidence_root=strict_evid)
+        strict_expected_evidence_root=strict_evid,
+        strict_expected_output_hash=strict_output, output=output)
     return approval, approved, report
 
 
-def seal(task, bundle, policy_result, approval, ledger_path, key_path=""):
+def seal(task, bundle, policy_result, approval, ledger_path, key_path="",
+         output=None, graph=None, generation=None):
     node = opl_nodes.OplDecisionSealer()
     return node.run(task=task, bundle=bundle, policy_result=policy_result,
                     approval=approval, ledger_path=ledger_path,
-                    hmac_key_path=key_path)
+                    hmac_key_path=key_path, output=output, graph=graph,
+                    generation=generation)
+
+
+def make_output(text="PAY Acme Cloud 1840.00 USD ref INV-2291"):
+    out, oh, _ = opl_nodes.OplOutputBinder().run(text_artifact=text,
+                                                 artifact_path="")
+    return out, oh
 
 
 def full_run(ledger, amount=1840.00, decision="APPROVED",
@@ -467,7 +477,7 @@ def test_sealed_record_contains_binding_fields():
         assert ap["binding_mode"] == "strict"
         assert ap["effective_decision"] == "APPROVED"
         assert ap["downgrade_reason"] is None
-        assert ap["schema"] == "oplogica.approval.v2"
+        assert ap["schema"] == "oplogica.approval.v3"
 
 
 def test_sealer_blocked_on_policy_failure():
@@ -847,7 +857,7 @@ def test_collector_content_change_changes_root():
 # ---------------------------------------------------------------------------
 
 def test_node_contracts():
-    assert len(opl_nodes.NODE_CLASS_MAPPINGS) == 10
+    assert len(opl_nodes.NODE_CLASS_MAPPINGS) == 14
     for name, cls in opl_nodes.NODE_CLASS_MAPPINGS.items():
         it = cls.INPUT_TYPES()
         assert isinstance(it, dict) and "required" in it, name
@@ -865,6 +875,8 @@ def test_gate_exposes_both_strict_fields():
     req = it["required"]
     assert "strict_expected_task_hash" in req
     assert "strict_expected_evidence_root" in req
+    assert "strict_expected_output_hash" in req
+    assert "output" in it.get("optional", {})
     assert "bundle" in req  # evidence is mandatory for evidence-bound approval
     assert req["decision"][1]["default"] == "PENDING"
 
@@ -888,7 +900,7 @@ def test_workflow_json_matches_node_definitions():
     by_id = {n["id"]: n for n in wf["nodes"]}
 
     for node in wf["nodes"]:
-        if node["type"] == "PreviewImage":
+        if node["type"] not in opl_nodes.NODE_CLASS_MAPPINGS:
             continue
         cls = opl_nodes.NODE_CLASS_MAPPINGS[node["type"]]
         conns, widgets = build_workflow.split_inputs(cls)
@@ -952,6 +964,761 @@ def test_card_renderer_approved_and_blocked():
         assert v2 == "BLOCKED"
         img2 = render_card(blocked_record)
         assert img2.size == (1200, 675) and img2.mode == "RGB"
+
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0: output binding
+# ---------------------------------------------------------------------------
+
+def test_output_binder_text_and_file_hashing():
+    out1, h1 = make_output("instruction A")
+    out2, h2 = make_output("instruction A")
+    out3, h3 = make_output("instruction B")
+    assert h1 == h2 and h1 != h3
+    assert out1["output_kind"] == "text"
+    assert out1["summary"]["excerpt"] == "instruction A"
+    with tempfile.TemporaryDirectory() as td:
+        fp = os.path.join(td, "artifact.bin")
+        with open(fp, "wb") as f:
+            f.write(b"artifact-bytes")
+        out, oh, _ = opl_nodes.OplOutputBinder().run(
+            text_artifact="", artifact_path=fp)
+        assert out["output_kind"] == "file"
+        assert oh == core.sha256_hex(b"artifact-bytes")
+
+
+def test_output_binder_image_hash_deterministic_and_sensitive():
+    import numpy as np
+    img = np.zeros((1, 8, 8, 3), dtype=np.float32)
+    img[0, 2, 3, 0] = 0.5
+    out_a, ha, _ = opl_nodes.OplOutputBinder().run(
+        text_artifact="", artifact_path="", image=img)
+    out_b, hb, _ = opl_nodes.OplOutputBinder().run(
+        text_artifact="", artifact_path="", image=img.copy())
+    assert ha == hb and out_a["output_kind"] == "image"
+    assert out_a["summary"] == {"height": 8, "width": 8}
+    img2 = img.copy()
+    img2[0, 2, 3, 0] = 0.9  # one pixel changes
+    _, hc, _ = opl_nodes.OplOutputBinder().run(
+        text_artifact="", artifact_path="", image=img2)
+    assert hc != ha
+    # Equivalent uint8 content hashes identically to the float form.
+    img_u8 = (np.clip(img[0] * 255.0 + 0.5, 0, 255)).astype(np.uint8)
+    _, hd, _ = opl_nodes.OplOutputBinder().run(
+        text_artifact="", artifact_path="", image=img_u8)
+    assert hd == ha
+
+
+def test_gate_output_strict_match_and_mismatch():
+    task, th = make_task()
+    bundle, root, _ = make_bundle()
+    out, oh = make_output()
+    appr, approved, report = make_approval(task, bundle, strict_task=th,
+                                           strict_evid=root,
+                                           strict_output=oh, output=out)
+    assert approved is True
+    assert appr["bound_output_hash"] == oh
+    assert appr["output_binding"] == "enforced"
+    assert oh in report
+    reviewed_out, reviewed_hash = make_output("what the human reviewed")
+    appr2, approved2, _ = make_approval(task, bundle, strict_task=th,
+                                        strict_evid=root,
+                                        strict_output=reviewed_hash,
+                                        output=out)
+    assert approved2 is False
+    assert appr2["downgrade_reason"].startswith("OUTPUT_BINDING_MISMATCH")
+    assert appr2["output_binding_ok"] is False
+
+
+def test_gate_task_mismatch_takes_precedence_over_output():
+    task, _ = make_task(amount=9999.00)
+    bundle, root, _ = make_bundle()
+    out, oh = make_output()
+    appr, approved, _ = make_approval(
+        task, bundle, strict_task=core.hash_obj({"old": "task"}),
+        strict_evid=root, strict_output=core.hash_obj({"old": "out"}),
+        output=out)
+    assert approved is False
+    assert appr["downgrade_reason"].startswith("TASK_BINDING_MISMATCH")
+    assert appr["output_binding_ok"] is False  # detail retained per flag
+
+
+def test_sealer_blocks_output_swap_and_missing_output():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        out_a, ha = make_output("artifact A")
+        out_b, hb = make_output("artifact B")
+        pol = make_policy_result(task, bundle)
+        appr, approved, _ = make_approval(task, bundle, strict_task=th,
+                                          strict_evid=root, strict_output=ha,
+                                          output=out_a)
+        assert approved is True
+        record, verdict, _, _ = seal(task, bundle, pol, appr, ledger,
+                                     output=out_b)
+        assert verdict == "BLOCKED"
+        assert "OUTPUT_BINDING_MISMATCH" in record["verdict"]["reasons"]
+        record2, verdict2, _, _ = seal(task, bundle, pol, appr, ledger,
+                                       output=None)
+        assert verdict2 == "BLOCKED"
+        assert "OUTPUT_BINDING_MISMATCH" in record2["verdict"]["reasons"]
+        record3, verdict3, _, _ = seal(task, bundle, pol, appr, ledger,
+                                       output=out_a)
+        assert verdict3 == "APPROVED"
+        assert record3["output"]["output_hash"] == ha
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0: workflow graph attestation
+# ---------------------------------------------------------------------------
+
+def _demo_prompt(seed=7, gate_decision="PENDING", extra_node=False):
+    prompt = {
+        "1": {"class_type": "OplTaskInput",
+              "inputs": {"actor": "a", "amount": 1.0}},
+        "2": {"class_type": "KSampler",
+              "inputs": {"seed": seed, "model": ["9", 0]}},
+        "3": {"class_type": "OplHumanApprovalGate",
+              "inputs": {"decision": gate_decision, "approver": "x",
+                         "task": ["1", 0]}},
+        "9": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": "m.safetensors"}},
+    }
+    if extra_node:
+        prompt["4"] = {"class_type": "OplTextDisplay",
+                       "inputs": {"text": ["3", 2]}}
+    return prompt
+
+
+def test_graph_hash_stable_and_excludes_review_channel():
+    h1, n1, l1 = core.canonical_graph_hash(_demo_prompt())
+    # Key order independence: rebuild with reversed insertion order.
+    rev = dict(reversed(list(_demo_prompt().items())))
+    h2, _, _ = core.canonical_graph_hash(rev)
+    assert h1 == h2 and n1 == 4 and l1 == 2
+    # Changing the gate's own widget values must not change the hash.
+    h3, _, _ = core.canonical_graph_hash(
+        _demo_prompt(gate_decision="APPROVED"))
+    assert h3 == h1
+    # Changing any other widget value must change the hash.
+    h4, _, _ = core.canonical_graph_hash(_demo_prompt(seed=8))
+    assert h4 != h1
+    # Adding a node (rewiring the structure) must change the hash.
+    h5, _, _ = core.canonical_graph_hash(_demo_prompt(extra_node=True))
+    assert h5 != h1
+
+
+def test_attestor_enforces_structure_at_seal_time():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        pol = make_policy_result(task, bundle)
+        attestor = opl_nodes.OplGraphAttestor()
+
+        reviewed_graph, reviewed_hash, _ = attestor.run(
+            "", prompt=_demo_prompt())
+        assert reviewed_graph["attested"] is True
+
+        # Pass 2 on the SAME structure: enforced and matching.
+        same_graph, _, _ = attestor.run(reviewed_hash,
+                                        prompt=_demo_prompt())
+        appr, _, _ = make_approval(task, bundle, strict_task=th,
+                                   strict_evid=root)
+        record, verdict, _, _ = seal(task, bundle, pol, appr, ledger,
+                                     graph=same_graph)
+        assert verdict == "APPROVED"
+        assert record["workflow"]["match"] is True
+
+        # Pass 2 after the structure changed: blocked.
+        changed_graph, _, _ = attestor.run(
+            reviewed_hash, prompt=_demo_prompt(extra_node=True))
+        assert changed_graph["match"] is False
+        record2, verdict2, _, _ = seal(task, bundle, pol, appr, ledger,
+                                       graph=changed_graph)
+        assert verdict2 == "BLOCKED"
+        assert "WORKFLOW_BINDING_MISMATCH" in record2["verdict"]["reasons"]
+
+
+def test_attestor_without_prompt_is_recorded_not_blocking():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        graph, gh, _ = opl_nodes.OplGraphAttestor().run("", prompt=None)
+        assert graph["attested"] is False and gh == ""
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        pol = make_policy_result(task, bundle)
+        appr, _, _ = make_approval(task, bundle, strict_task=th,
+                                   strict_evid=root)
+        record, verdict, _, _ = seal(task, bundle, pol, appr, ledger,
+                                     graph=graph)
+        assert verdict == "APPROVED"
+        assert record["workflow"]["attested"] is False
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0: generation context
+# ---------------------------------------------------------------------------
+
+def test_generation_context_hash_and_text_privacy():
+    node = opl_nodes.OplGenerationContext()
+    secret_tail = "SECRET-PROMPT-TAIL-7741"
+    long_pos = ("a" * 120) + secret_tail
+    gen1, ch1 = node.run(model_name="m", sampler="euler", scheduler="normal",
+                         seed=7, steps=20, cfg=7.0, positive_text=long_pos,
+                         negative_text="bad", extra_json="{}")
+    gen2, ch2 = node.run(model_name="m", sampler="euler", scheduler="normal",
+                         seed=8, steps=20, cfg=7.0, positive_text=long_pos,
+                         negative_text="bad", extra_json="{}")
+    assert ch1 != ch2  # the seed is part of the context identity
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        pol = make_policy_result(task, bundle)
+        appr, _, _ = make_approval(task, bundle, strict_task=th,
+                                   strict_evid=root)
+        record, verdict, _, record_json = seal(task, bundle, pol, appr,
+                                               ledger, generation=gen1)
+        assert verdict == "APPROVED"
+        assert record["generation"]["seed"] == 7
+        # Full text never enters the record: hash plus 96-char excerpt only.
+        assert secret_tail not in record_json
+        assert core.sha256_hex(long_pos) in record_json
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0: decision passport and standalone verifier
+# ---------------------------------------------------------------------------
+
+def test_passport_build_and_verify_roundtrip():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        writer = opl_nodes.OplAuditLedgerWriter()
+        writer.run(record=_sealed_record(ledger, 100.00), ledger_path=ledger)
+        writer.run(record=_sealed_record(ledger, 200.00), ledger_path=ledger)
+        passport = core.build_passport(ledger, 1)
+        assert passport["chain_context"]["position"] == 1
+        assert passport["chain_context"]["prev_record"] is not None
+        result = core.verify_passport(passport)
+        assert result["valid"] is True, result
+        names = [c["name"] for c in result["checks"]]
+        assert "chain_link" in names and "record_hash" in names
+
+        # Tamper with a sealed field inside the passport: must go invalid.
+        bad = json.loads(json.dumps(passport))
+        bad["record"]["task"]["amount"] = 31337.0
+        result_bad = core.verify_passport(bad)
+        assert result_bad["valid"] is False
+
+        # Break the chain context: must go invalid.
+        bad2 = json.loads(json.dumps(passport))
+        bad2["record"]["chain"]["prev_record_hash"] = "f" * 64
+        assert core.verify_passport(bad2)["valid"] is False
+
+
+def test_passport_verifies_signature_with_key():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        key_path = os.path.join(td, "k.key")
+        key = b"0123456789abcdef0123456789abcdef"
+        with open(key_path, "wb") as f:
+            f.write(key)
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        pol = make_policy_result(task, bundle)
+        appr, _, _ = make_approval(task, bundle, strict_task=th,
+                                   strict_evid=root)
+        record, _, _, _ = seal(task, bundle, pol, appr, ledger,
+                               key_path=key_path)
+        opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                             ledger_path=ledger)
+        passport = core.build_passport(ledger, 0)
+        assert core.verify_passport(passport, key=key)["valid"] is True
+        assert core.verify_passport(
+            passport, key=b"ffffffffffffffffffffffffffffffff")["valid"] is False
+
+
+def test_passport_cli_roundtrip_and_tamper():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        writer = opl_nodes.OplAuditLedgerWriter()
+        writer.run(record=_sealed_record(ledger, 100.00), ledger_path=ledger)
+        cli = os.path.join(ROOT, "oplogica_core.py")
+        ppath = os.path.join(td, "passport.json")
+        made = subprocess.run([sys.executable, cli, "passport", ledger,
+                               "-o", ppath], capture_output=True, text=True)
+        assert made.returncode == 0 and os.path.exists(ppath), made.stderr
+        ok = subprocess.run([sys.executable, cli, "verify-passport", ppath],
+                            capture_output=True, text=True)
+        assert ok.returncode == 0, ok.stdout + ok.stderr
+        with open(ppath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["record"]["task"]["amount"] = 1.0
+        with open(ppath, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        bad = subprocess.run([sys.executable, cli, "verify-passport", ppath],
+                             capture_output=True, text=True)
+        assert bad.returncode != 0
+
+
+def test_passport_exporter_node():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        record = _sealed_record(ledger, 100.00)
+        opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                             ledger_path=ledger)
+        exporter = opl_nodes.OplPassportExporter()
+        path, status, text = exporter.run(record=record, ledger_path=ledger,
+                                          passport_dir=td)
+        assert status == "EXPORTED" and os.path.exists(path)
+        assert core.verify_passport(json.loads(text))["valid"] is True
+        # Record not in the ledger: chain-context-free export still works.
+        orphan = _sealed_record(os.path.join(td, "other.jsonl"), 50.00)
+        path2, status2, text2 = exporter.run(record=orphan,
+                                             ledger_path=ledger,
+                                             passport_dir=td)
+        assert status2 == "EXPORTED_WITHOUT_CHAIN_CONTEXT"
+        assert core.verify_passport(json.loads(text2))["valid"] is True
+
+
+def test_verifier_html_is_local_only():
+    path = os.path.join(ROOT, "verifier", "verifier.html")
+    assert os.path.exists(path)
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    assert "<script src=" not in html
+    assert "fetch(" not in html
+    assert "XMLHttpRequest" not in html
+    assert "PASSPORT VALID" in html
+    assert "Integrity is not truth" in html
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0: compatibility and packaging
+# ---------------------------------------------------------------------------
+
+def test_v1_records_without_new_sections_still_validate():
+    """A v1.0.0-style record (no output, workflow, or generation section)
+    chains and validates unchanged: the schema extension is additive."""
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        task, th = make_task()
+        bundle, root, _ = make_bundle()
+        pol = make_policy_result(task, bundle)
+        appr, _, _ = make_approval(task, bundle, strict_task=th,
+                                   strict_evid=root)
+        old_style = core.seal_record(
+            task=task, evidence_summary={"merkle_root": root, "stats": {},
+                                         "items": []},
+            checks={"policy": pol}, approvals=[appr],
+            verdict={"status": "APPROVED", "reasons": [],
+                     "requires_human": True},
+            prev_hash=core.GENESIS)
+        assert "output" not in old_style and "workflow" not in old_style
+        pos, status = core.ledger_append(ledger, old_style)
+        assert status == "APPENDED"
+        new_record = _sealed_record(ledger, 200.00)
+        core.ledger_append(ledger, new_record)
+        result = core.validate_chain(core.ledger_read(ledger))
+        assert result["valid"] is True and result["length"] == 2
+
+
+def test_image_demo_workflow_consistency():
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import build_workflow  # noqa: E402
+
+    wf = build_workflow.build_image_demo()
+    by_id = {n["id"]: n for n in wf["nodes"]}
+    for node in wf["nodes"]:
+        if node["type"] not in opl_nodes.NODE_CLASS_MAPPINGS:
+            continue  # base ComfyUI nodes ship as a static reference spec
+        cls = opl_nodes.NODE_CLASS_MAPPINGS[node["type"]]
+        conns, widgets = build_workflow.split_inputs(cls)
+        assert len(node["widgets_values"]) == len(widgets), node["type"]
+        assert [i["name"] for i in node["inputs"]] == [c[0] for c in conns], \
+            node["type"]
+    for lid, frm, fslot, to, tslot, ltype in wf["links"]:
+        src, dst = by_id[frm], by_id[to]
+        assert src["outputs"][fslot]["type"] == ltype
+        assert dst["inputs"][tslot]["type"] == ltype
+    # The decision layer is wired end to end.
+    sealer = next(n for n in wf["nodes"] if n["type"] == "OplDecisionSealer")
+    linked = [i["name"] for i in sealer["inputs"] if i["link"] is not None]
+    for name in ("task", "bundle", "policy_result", "approval", "output",
+                 "graph", "generation"):
+        assert name in linked, name
+
+
+def test_tamper_pack_builder():
+    sys.path.insert(0, os.path.join(ROOT, "tools"))
+    import build_tamper_pack  # noqa: E402
+
+    with tempfile.TemporaryDirectory() as td:
+        out = build_tamper_pack.main(os.path.join(td, "pack"))
+        names = sorted(os.listdir(out))
+        for d in ("01_clean", "02_ledger_tampered", "03_wrong_key",
+                  "04_changed_evidence", "05_changed_task",
+                  "06_changed_output"):
+            assert d in names, names
+        assert "README.md" in names
+        clean = core.validate_chain(core.ledger_read(
+            os.path.join(out, "01_clean", "ledger.jsonl")),
+            key=build_tamper_pack.DEMO_KEY_CORRECT)
+        assert clean["valid"] and clean["signatures_checked"] == 2
+        tampered = core.validate_chain(core.ledger_read(
+            os.path.join(out, "02_ledger_tampered", "ledger.jsonl")))
+        assert tampered["valid"] is False
+        rec4 = core.ledger_read(os.path.join(out, "04_changed_evidence",
+                                             "ledger.jsonl"))[0]
+        assert "EVIDENCE_BINDING_MISMATCH" in rec4["verdict"]["reasons"]
+        rec6 = core.ledger_read(os.path.join(out, "06_changed_output",
+                                             "ledger.jsonl"))[0]
+        assert "OUTPUT_BINDING_MISMATCH" in rec6["verdict"]["reasons"]
+
+
+
+# ---------------------------------------------------------------------------
+# v1.1.0 release candidate: live-test regressions (imports, paths, colors)
+# ---------------------------------------------------------------------------
+
+import contextlib
+
+
+@contextlib.contextmanager
+def fake_comfyui_output_dir(path):
+    """Inject a minimal folder_paths module so resolve_output_path behaves
+    exactly as inside ComfyUI, with the output directory at `path`."""
+    import types
+    mod = types.ModuleType("folder_paths")
+    mod.get_output_directory = lambda: path
+    saved = sys.modules.get("folder_paths")
+    sys.modules["folder_paths"] = mod
+    try:
+        yield path
+    finally:
+        if saved is None:
+            del sys.modules["folder_paths"]
+        else:
+            sys.modules["folder_paths"] = saved
+
+
+def test_package_relative_imports_comfyui_style():
+    """Load the repository exactly the way ComfyUI loads a custom node
+    package (spec_from_file_location on __init__.py, no repo on sys.path,
+    no cached top-level modules) and exercise the Passport Exporter branch
+    that previously failed with ModuleNotFoundError in the live test."""
+    script = """
+import importlib.util, json, os, sys, tempfile
+root = sys.argv[1]
+spec = importlib.util.spec_from_file_location(
+    "oplogica_pkg_test", os.path.join(root, "__init__.py"),
+    submodule_search_locations=[root])
+mod = importlib.util.module_from_spec(spec)
+sys.modules["oplogica_pkg_test"] = mod
+spec.loader.exec_module(mod)
+M = mod.NODE_CLASS_MAPPINGS
+assert len(M) == 14, len(M)
+task, th = M["OplTaskInput"]().run(
+    actor="a", actor_type="ai_agent", action_type="payment.vendor",
+    amount=10.0, currency="USD", payload_json="{}", risk_hint="low")
+(e1,) = M["OplEvidenceItem"]().run(
+    claim="c", source_url="https://example.com/x", content="body",
+    collected_at="")
+(e2,) = M["OplEvidenceItem"]().run(
+    claim="d", source_url="https://example.com/y", content="body2",
+    collected_at="")
+bundle, root_hash, _ = M["OplEvidenceCollector"]().run(
+    evidence_1=e1, evidence_2=e2, max_age_days=90, require_source=True)
+pol, _, _ = M["OplPolicyCheck"]().run(
+    task=task, bundle=bundle,
+    policy_json=open(os.path.join(root, "policies",
+                                  "default_policy.json")).read())
+appr, ok, _ = M["OplHumanApprovalGate"]().run(
+    task=task, bundle=bundle, decision="APPROVED", approver="x", note="",
+    strict_expected_task_hash=th, strict_expected_evidence_root=root_hash,
+    strict_expected_output_hash="")
+with tempfile.TemporaryDirectory() as td:
+    record, verdict, rh, _ = M["OplDecisionSealer"]().run(
+        task=task, bundle=bundle, policy_result=pol, approval=appr,
+        ledger_path=os.path.join(td, "l.jsonl"), hmac_key_path="")
+    # Orphan record (not written to any ledger): this is exactly the
+    # branch that contained the package-unsafe absolute import.
+    path, status, text = M["OplPassportExporter"]().run(
+        record=record, ledger_path=os.path.join(td, "missing.jsonl"),
+        passport_dir=td)
+    assert status == "EXPORTED_WITHOUT_CHAIN_CONTEXT", status
+    assert os.path.exists(path)
+    json.loads(text)
+print("PACKAGE_IMPORT_OK")
+"""
+    with tempfile.TemporaryDirectory() as td:
+        sp = os.path.join(td, "load_as_package.py")
+        with open(sp, "w", encoding="utf-8") as f:
+            f.write(script)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        proc = subprocess.run([sys.executable, sp, ROOT], cwd=td,
+                              capture_output=True, text=True, env=env)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert "PACKAGE_IMPORT_OK" in proc.stdout
+
+
+def test_hmac_key_relative_resolves_from_comfyui_output_dir():
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = os.path.join(td, "output")
+        os.makedirs(os.path.join(out_dir, "oplogica"))
+        key = b"0123456789abcdef0123456789abcdef"
+        with open(os.path.join(out_dir, "oplogica", "hmac.key"), "wb") as f:
+            f.write(key)
+        with fake_comfyui_output_dir(out_dir):
+            loaded = core.load_hmac_key("oplogica/hmac.key")
+        assert loaded is not None and loaded[0] == key
+
+
+def test_hmac_key_cwd_relative_still_works_for_cli():
+    with tempfile.TemporaryDirectory() as td:
+        key = b"0123456789abcdef0123456789abcdef"
+        with open(os.path.join(td, "k.key"), "wb") as f:
+            f.write(key)
+        cwd = os.getcwd()
+        os.chdir(td)
+        try:
+            loaded = core.load_hmac_key("k.key")
+        finally:
+            os.chdir(cwd)
+        assert loaded is not None and loaded[0] == key
+
+
+def test_hmac_key_absolute_path_and_actionable_missing_error():
+    with tempfile.TemporaryDirectory() as td:
+        key = b"0123456789abcdef0123456789abcdef"
+        abs_path = os.path.join(td, "k.key")
+        with open(abs_path, "wb") as f:
+            f.write(key)
+        assert core.load_hmac_key(abs_path)[0] == key
+        with fake_comfyui_output_dir(os.path.join(td, "output")):
+            try:
+                core.load_hmac_key("oplogica/missing.key")
+                assert False, "expected FileNotFoundError"
+            except FileNotFoundError as e:
+                msg = str(e)
+        # The error names every resolved candidate, absolute.
+        assert os.path.abspath("oplogica/missing.key") in msg
+        assert os.path.join(td, "output", "oplogica", "missing.key") in msg
+        assert "output directory" in msg
+
+
+def test_passport_dir_relative_resolves_from_comfyui_output_dir():
+    it = opl_nodes.OplPassportExporter.INPUT_TYPES()
+    assert it["required"]["passport_dir"][1]["default"] == "oplogica"
+    with tempfile.TemporaryDirectory() as td:
+        out_dir = os.path.join(td, "output")
+        os.makedirs(out_dir)
+        with fake_comfyui_output_dir(out_dir):
+            ledger_rel = "oplogica/ledger.jsonl"
+            record = _sealed_record(ledger_rel, 100.00)
+            opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                                 ledger_path=ledger_rel)
+            path, status, text = opl_nodes.OplPassportExporter().run(
+                record=record, ledger_path=ledger_rel,
+                passport_dir="oplogica")
+        assert status == "EXPORTED"
+        expected_dir = os.path.join(out_dir, "oplogica")
+        assert os.path.dirname(path) == expected_dir
+        assert os.path.exists(path)
+        assert core.verify_passport(json.loads(text))["valid"] is True
+
+
+def _rel_luminance(hex_color):
+    def chan(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+
+
+def _contrast(hex_a, hex_b):
+    la, lb = _rel_luminance(hex_a), _rel_luminance(hex_b)
+    lo, hi = min(la, lb), max(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_node_palette_readable_in_dark_mode():
+    """Every node title must read clearly against its header in dark mode
+    (light title text, approximately #E8E8E8), and no node may look
+    disabled: header and body differ, body darker than header."""
+    title_text = "#E8E8E8"
+    palette = opl_nodes.OPL_NODE_COLORS
+    assert set(palette) == set(opl_nodes.NODE_CLASS_MAPPINGS)
+    for name, (header, body) in palette.items():
+        assert header != body, name
+        assert _contrast(header, title_text) >= 4.5, \
+            "%s header %s fails title contrast (%.2f)" % (
+                name, header, _contrast(header, title_text))
+        assert _rel_luminance(body) < _rel_luminance(header), name
+
+
+def test_workflows_bake_colors_and_contain_no_machine_paths():
+    for fname in ("oplogica_payment_demo.json", "oplogica_image_demo.json"):
+        path = os.path.join(ROOT, "workflows", fname)
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
+        # Portable: no drive letters, no user-machine absolute paths.
+        assert ":\\" not in raw and "/home/" not in raw, fname
+        wf = json.loads(raw)
+        assert wf["version"] == 0.4
+        for node in wf["nodes"]:
+            if node["type"] in opl_nodes.OPL_NODE_COLORS:
+                header, body = opl_nodes.OPL_NODE_COLORS[node["type"]]
+                assert node.get("color") == header, (fname, node["type"])
+                assert node.get("bgcolor") == body, (fname, node["type"])
+
+
+def test_frontend_palette_in_sync_with_python_palette():
+    with open(os.path.join(ROOT, "web", "oplogica.js"), "r",
+              encoding="utf-8") as f:
+        js = f.read()
+    for name, (header, body) in opl_nodes.OPL_NODE_COLORS.items():
+        assert name in js, name
+        assert header in js and body in js, (name, header, body)
+
+
+
+# ---------------------------------------------------------------------------
+# Final live test: GENESIS passport semantics and export ordering
+# ---------------------------------------------------------------------------
+
+def test_passport_genesis_first_record_verifies():
+    """A passport for the first record of a fresh ledger declares GENESIS,
+    embeds no predecessor, and must verify as valid."""
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        record = _sealed_record(ledger, 100.00)
+        opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                             ledger_path=ledger)
+        passport = core.build_passport(ledger, 0)
+        assert passport["chain_context"]["position"] == 0
+        assert passport["chain_context"]["prev_record"] is None
+        assert passport["record"]["chain"]["prev_record_hash"] == core.GENESIS
+        result = core.verify_passport(passport)
+        assert result["valid"] is True, result
+        link = next(c for c in result["checks"] if c["name"] == "chain_link")
+        assert link["passed"] and "first record" in link["detail"]
+
+
+def test_passport_non_genesis_requires_and_verifies_predecessor():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        writer = opl_nodes.OplAuditLedgerWriter()
+        writer.run(record=_sealed_record(ledger, 100.00), ledger_path=ledger)
+        writer.run(record=_sealed_record(ledger, 200.00), ledger_path=ledger)
+        passport = core.build_passport(ledger, 1)
+        assert passport["chain_context"]["prev_record"] is not None
+        result = core.verify_passport(passport)
+        assert result["valid"] is True, result
+        names = [c["name"] for c in result["checks"]]
+        assert "prev_record_hash" in names
+        assert "prev_canonical_parity" in names
+
+
+def test_passport_non_genesis_with_missing_predecessor_fails():
+    """The exact failure observed in the final live test: a record that
+    declares a real predecessor, exported without chain context. The
+    verifier must fail chain_link with an actionable message."""
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        writer = opl_nodes.OplAuditLedgerWriter()
+        writer.run(record=_sealed_record(ledger, 100.00), ledger_path=ledger)
+        writer.run(record=_sealed_record(ledger, 200.00), ledger_path=ledger)
+        passport = core.build_passport(ledger, 1)
+        passport["chain_context"]["prev_record"] = None
+        passport["chain_context"]["prev_record_canonical_body"] = None
+        passport["chain_context"]["position"] = None
+        result = core.verify_passport(passport)
+        assert result["valid"] is False
+        link = next(c for c in result["checks"] if c["name"] == "chain_link")
+        assert link["passed"] is False
+        assert "declares predecessor" in link["detail"]
+        assert "run_after" in link["detail"]
+
+
+def test_passport_genesis_with_unexpected_predecessor_fails():
+    """A GENESIS record with a predecessor injected into the passport is
+    inconsistent and must fail the chain link check."""
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        writer = opl_nodes.OplAuditLedgerWriter()
+        writer.run(record=_sealed_record(ledger, 100.00), ledger_path=ledger)
+        writer.run(record=_sealed_record(ledger, 200.00), ledger_path=ledger)
+        first = core.build_passport(ledger, 0)
+        second = core.build_passport(ledger, 1)
+        # Inject the second record as a fake predecessor of the first.
+        first["chain_context"]["prev_record"] = second["record"]
+        first["chain_context"]["prev_record_canonical_body"] = \
+            second["record_canonical_body"]
+        result = core.verify_passport(first)
+        assert result["valid"] is False
+        link = next(c for c in result["checks"] if c["name"] == "chain_link")
+        assert link["passed"] is False
+
+
+def test_passport_genesis_with_nonzero_position_fails():
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        record = _sealed_record(ledger, 100.00)
+        opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                             ledger_path=ledger)
+        passport = core.build_passport(ledger, 0)
+        passport["chain_context"]["position"] = 3
+        result = core.verify_passport(passport)
+        assert result["valid"] is False
+        link = next(c for c in result["checks"] if c["name"] == "chain_link")
+        assert "position" in link["detail"]
+
+
+def test_unsigned_record_with_key_fails_with_clear_reason():
+    """Verifying an unsigned record while providing a key is a failure by
+    design (the caller asked for signature assurance that does not exist),
+    and the reason must be explicit."""
+    with tempfile.TemporaryDirectory() as td:
+        ledger = os.path.join(td, "ledger.jsonl")
+        record = _sealed_record(ledger, 100.00)  # sealed without a key
+        opl_nodes.OplAuditLedgerWriter().run(record=record,
+                                             ledger_path=ledger)
+        passport = core.build_passport(ledger, 0)
+        assert core.verify_passport(passport)["valid"] is True
+        result = core.verify_passport(passport, key=b"x" * 32)
+        assert result["valid"] is False
+        sig = next(c for c in result["checks"]
+                   if c["name"] == "hmac_signature")
+        assert sig["detail"] == "key provided but record is unsigned"
+
+
+def test_exporter_ordering_input_and_workflow_wiring():
+    """The exporter exposes run_after, and both demo workflows wire the
+    writer's record_hash into it so the passport is always exported after
+    the record is in the ledger (the execution order race from the final
+    live test)."""
+    it = opl_nodes.OplPassportExporter.INPUT_TYPES()
+    assert "run_after" in it.get("optional", {})
+    assert it["optional"]["run_after"][1].get("forceInput") is True
+    for fname in ("oplogica_payment_demo.json", "oplogica_image_demo.json"):
+        with open(os.path.join(ROOT, "workflows", fname),
+                  encoding="utf-8") as f:
+            wf = json.load(f)
+        by_id = {n["id"]: n for n in wf["nodes"]}
+        exporter = next(n for n in wf["nodes"]
+                        if n["type"] == "OplPassportExporter")
+        writer = next(n for n in wf["nodes"]
+                      if n["type"] == "OplAuditLedgerWriter")
+        ra = next(i for i in exporter["inputs"] if i["name"] == "run_after")
+        assert ra["link"] is not None, fname
+        link = next(l for l in wf["links"] if l[0] == ra["link"])
+        assert link[1] == writer["id"], fname
+        assert writer["outputs"][link[2]]["name"] == "record_hash", fname
 
 
 # ---------------------------------------------------------------------------

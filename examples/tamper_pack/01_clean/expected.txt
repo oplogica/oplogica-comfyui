@@ -1,0 +1,4 @@
+python3 oplogica_core.py verify 01_clean/ledger.jsonl demo_key_correct_PUBLIC.txt
+-> CHAIN VALID | records=2 | signatures_checked=2 (exit 0)
+python3 oplogica_core.py verify-passport 01_clean/passport.json demo_key_correct_PUBLIC.txt
+-> PASSPORT VALID (exit 0)

@@ -59,7 +59,8 @@ def make_bundle(amount, invoice_status="open"):
 
 
 def gate_seal_write(task, task_hash, bundle, decision, approver,
-                    strict_task, strict_evid, ledger, note=""):
+                    strict_task, strict_evid, ledger, note="",
+                    output=None, strict_output=""):
     policy = opl.OplPolicyCheck()
     policy_result, _, _ = policy.run(
         task=task, bundle=bundle, policy_json=opl.DEFAULT_POLICY_JSON)
@@ -68,12 +69,14 @@ def gate_seal_write(task, task_hash, bundle, decision, approver,
     approval, _, _ = gate.run(
         task=task, bundle=bundle, decision=decision, approver=approver,
         note=note, strict_expected_task_hash=strict_task,
-        strict_expected_evidence_root=strict_evid)
+        strict_expected_evidence_root=strict_evid,
+        strict_expected_output_hash=strict_output, output=output)
 
     sealer = opl.OplDecisionSealer()
     record, verdict, record_hash, record_json = sealer.run(
         task=task, bundle=bundle, policy_result=policy_result,
-        approval=approval, ledger_path=ledger, hmac_key_path="")
+        approval=approval, ledger_path=ledger, hmac_key_path="",
+        output=output)
 
     writer = opl.OplAuditLedgerWriter()
     writer.run(record=record, ledger_path=ledger)
@@ -86,13 +89,20 @@ def main():
     if os.path.exists(ledger):
         os.remove(ledger)
 
-    # Scenario 1: strict dual binding, reviewed and approved, unchanged.
+    # Scenario 1: strict triple binding (task, evidence, output), reviewed
+    # and approved, unchanged. The output is the payment instruction the
+    # run produces; in an image workflow it would be the generated image.
     task, th = make_task(1840.00)
     bundle, root = make_bundle(1840.00)
+    binder = opl.OplOutputBinder()
+    out_a, out_hash, _ = binder.run(
+        text_artifact="PAY Acme Cloud 1840.00 USD ref INV-2291",
+        artifact_path="")
     rec_a, verdict_a, record_json = gate_seal_write(
         task, th, bundle, decision="APPROVED", approver="m.ibrahim",
         strict_task=th, strict_evid=root, ledger=ledger,
-        note="Invoice matches contract ACME-2024-118. Amount within policy.")
+        note="Invoice matches contract ACME-2024-118. Amount within policy.",
+        output=out_a, strict_output=out_hash)
     render_card(rec_a).save(os.path.join(EXAMPLES, "card_approved.png"))
     with open(os.path.join(EXAMPLES, "sample_decision_record.json"),
               "w", encoding="utf-8") as f:
@@ -133,9 +143,22 @@ def main():
     assert verdict_b == "BLOCKED"
     assert verdict_c == "BLOCKED"
     assert "EVIDENCE_BINDING_MISMATCH" in rec_c["verdict"]["reasons"]
+
+    # Export a passport for the approved record so the bundled local
+    # verifier has a ready example to load.
+    import oplogica_core as core
+    passport = core.build_passport(ledger, 0)
+    with open(os.path.join(EXAMPLES, "passport_example.json"), "w",
+              encoding="utf-8") as f:
+        json.dump(passport, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    pv = core.verify_passport(passport)
+    assert pv["valid"], pv
+
     print("Wrote examples: card_approved.png (%s), card_blocked.png (%s), "
           "card_evidence_mismatch.png (%s), sample_decision_record.json, "
-          "sample_ledger.jsonl" % (verdict_a, verdict_b, verdict_c))
+          "sample_ledger.jsonl, passport_example.json" % (
+              verdict_a, verdict_b, verdict_c))
 
 
 if __name__ == "__main__":

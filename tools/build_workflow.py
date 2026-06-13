@@ -25,6 +25,7 @@ sys.path.insert(0, ROOT)
 
 import nodes as opl_nodes  # noqa: E402
 from oplogica_core import PACK_VERSION  # noqa: E402
+from nodes import OPL_NODE_COLORS  # noqa: E402
 
 WIDGET_TYPES = {"STRING", "INT", "FLOAT", "BOOLEAN"}
 
@@ -55,7 +56,8 @@ def split_inputs(cls):
 
 
 class WorkflowBuilder:
-    def __init__(self):
+    def __init__(self, scenario="vendor_payment_demo"):
+        self.scenario = scenario
         self.nodes = []
         self.links = []
         self.groups = []
@@ -77,7 +79,8 @@ class WorkflowBuilder:
         for i, (t, n) in enumerate(zip(ret_types, ret_names)):
             outputs.append({"name": n, "type": t, "links": [], "slot_index": i})
 
-        self.nodes.append({
+        header, body = OPL_NODE_COLORS.get(class_name, (None, None))
+        node = {
             "id": node_id,
             "type": class_name,
             "pos": list(pos),
@@ -89,7 +92,11 @@ class WorkflowBuilder:
             "outputs": outputs,
             "properties": {"Node name for S&R": class_name},
             "widgets_values": widgets_values,
-        })
+        }
+        if header:
+            node["color"] = header
+            node["bgcolor"] = body
+        self.nodes.append(node)
         return node_id
 
     def add_core_preview_image(self, node_id, pos, size, order):
@@ -105,6 +112,29 @@ class WorkflowBuilder:
             "outputs": [],
             "properties": {"Node name for S&R": "PreviewImage"},
             "widgets_values": [],
+        })
+        return node_id
+
+    def add_core_node(self, node_id, type_name, pos, size, order,
+                      inputs, widgets_values, outputs):
+        """Add a base ComfyUI node from a static spec. Base nodes cannot be
+        introspected outside ComfyUI, so the spec (input names and types,
+        positional widget values, output names and types) is declared by
+        the caller and documented as a reference, not introspected."""
+        self.nodes.append({
+            "id": node_id,
+            "type": type_name,
+            "pos": list(pos),
+            "size": list(size),
+            "flags": {},
+            "order": order,
+            "mode": 0,
+            "inputs": [{"name": n, "type": t, "link": None}
+                       for n, t in inputs],
+            "outputs": [{"name": n, "type": t, "links": [], "slot_index": i}
+                        for i, (n, t) in enumerate(outputs)],
+            "properties": {"Node name for S&R": type_name},
+            "widgets_values": list(widgets_values),
         })
         return node_id
 
@@ -165,7 +195,7 @@ class WorkflowBuilder:
             "extra": {
                 "oplogica": {
                     "pack_version": PACK_VERSION,
-                    "scenario": "vendor_payment_demo",
+                    "scenario": self.scenario,
                 }
             },
             "version": 0.4,
@@ -217,6 +247,10 @@ def build():
     # Utility: show the approval report inline.
     b.add_opl_node(12, "OplTextDisplay", (1540, 700), (420, 250), 11)
 
+    # v1.1.0: attest the workflow structure and export a portable passport.
+    b.add_opl_node(13, "OplGraphAttestor", (1540, 1000), (420, 150), 12)
+    b.add_opl_node(14, "OplPassportExporter", (2020, 720), (380, 170), 13)
+
     # Wiring.
     b.link(1, 0, 5, "task")            # task -> policy
     b.link(1, 0, 6, "task")            # task -> gate
@@ -233,6 +267,9 @@ def build():
     b.link(9, 0, 10, "images")         # card -> preview
     b.link(8, 2, 11, "run_after")      # writer record_hash -> validator ordering
     b.link(6, 2, 12, "text")           # gate report -> text display
+    b.link(13, 0, 7, "graph")          # workflow attestation -> sealer
+    b.link(7, 0, 14, "record")         # record -> passport exporter
+    b.link(8, 2, 14, "run_after")      # writer record_hash -> exporter order
 
     # Layer groups (visual bands matching the node colors).
     b.group("1 INPUT", (20, 60, 510, 1260), "#141a22")
@@ -245,16 +282,166 @@ def build():
     return b.to_json()
 
 
+IMAGE_POLICY = {
+    "policy_id": "OPL-IMG-001",
+    "version": "1.0.0",
+    "allowed_actions": ["image.generation"],
+    "limits": {"max_amount": 5000, "currency": "USD"},
+    "evidence": {"min_items": 2, "max_age_days": 90, "require_source": True},
+    "sensitive_patterns": ["delete", "transfer.external", "credentials"],
+    "required_approvals": 1,
+}
+
+POSITIVE = ("studio product photo of a ceramic coffee mug, brand colors "
+            "teal and white, soft window light, shallow depth of field")
+NEGATIVE = "blurry, text, watermark, logo distortion"
+
+
+def build_image_demo():
+    """Image generation demo for screen recording: the approval binds to the
+    task, the evidence, AND the generated image; the attestor binds the
+    workflow structure. Base ComfyUI nodes (checkpoint loader, text encode,
+    sampler, decode, save) are added from a static reference spec because
+    they cannot be introspected outside ComfyUI; if a frontend build
+    rejects them, rebuild that part by hand and keep the Oplogica wiring.
+    Requires any local checkpoint; with a fixed seed, re-queueing
+    reproduces the same image hash."""
+    b = WorkflowBuilder(scenario="image_generation_demo")
+    LEDGER = "output/oplogica/ledger_image_demo.jsonl"
+
+    # Base generation chain (static reference spec, classic widget order).
+    b.add_core_node(1, "CheckpointLoaderSimple", (60, 80), (380, 120), 0,
+                    inputs=[],
+                    widgets_values=["v1-5-pruned-emaonly.safetensors"],
+                    outputs=[("MODEL", "MODEL"), ("CLIP", "CLIP"),
+                             ("VAE", "VAE")])
+    b.add_core_node(2, "CLIPTextEncode", (60, 260), (400, 180), 1,
+                    inputs=[("clip", "CLIP")], widgets_values=[POSITIVE],
+                    outputs=[("CONDITIONING", "CONDITIONING")])
+    b.add_core_node(3, "CLIPTextEncode", (60, 500), (400, 160), 2,
+                    inputs=[("clip", "CLIP")], widgets_values=[NEGATIVE],
+                    outputs=[("CONDITIONING", "CONDITIONING")])
+    b.add_core_node(4, "EmptyLatentImage", (60, 720), (320, 130), 3,
+                    inputs=[], widgets_values=[512, 512, 1],
+                    outputs=[("LATENT", "LATENT")])
+    b.add_core_node(5, "KSampler", (520, 300), (320, 320), 4,
+                    inputs=[("model", "MODEL"),
+                            ("positive", "CONDITIONING"),
+                            ("negative", "CONDITIONING"),
+                            ("latent_image", "LATENT")],
+                    widgets_values=[7, "fixed", 20, 7.0, "euler", "normal",
+                                    1.0],
+                    outputs=[("LATENT", "LATENT")])
+    b.add_core_node(6, "VAEDecode", (880, 300), (240, 100), 5,
+                    inputs=[("samples", "LATENT"), ("vae", "VAE")],
+                    widgets_values=[], outputs=[("IMAGE", "IMAGE")])
+    b.add_core_node(7, "SaveImage", (880, 460), (320, 300), 6,
+                    inputs=[("images", "IMAGE")],
+                    widgets_values=["oplogica_demo"], outputs=[])
+
+    # Oplogica decision layer.
+    b.add_opl_node(8, "OplTaskInput", (60, 920), (420, 360), 7, overrides={
+        "actor": "studio-agent-01",
+        "action_type": "image.generation",
+        "amount": 0.0,
+        "payload_json": json.dumps({"deliverable": "product hero image",
+                                    "client": "Acme Beverage"}),
+        "risk_hint": "low",
+    })
+    b.add_opl_node(9, "OplEvidenceItem", (60, 1340), (420, 320), 8, overrides={
+        "claim": "Creative brief CB-77 approves a teal and white mug hero "
+                 "image for the Acme Beverage spring campaign",
+        "source_url": "https://dam.example.com/briefs/CB-77",
+        "content": "Brief CB-77: hero image, ceramic mug, brand palette "
+                   "teal and white, studio light, no on-image text.",
+    })
+    b.add_opl_node(10, "OplEvidenceItem", (60, 1720), (420, 320), 9, overrides={
+        "claim": "Model license L-2026-114 covers commercial generation for "
+                 "this client",
+        "source_url": "https://licenses.example.com/L-2026-114",
+        "content": "License L-2026-114 grants commercial image generation "
+                   "rights for Acme Beverage deliverables through 2026.",
+    })
+    b.add_opl_node(11, "OplEvidenceCollector", (560, 1440), (380, 210), 10)
+    b.add_opl_node(12, "OplPolicyCheck", (1020, 900), (460, 500), 11,
+                   overrides={"policy_json": json.dumps(IMAGE_POLICY,
+                                                        indent=2)})
+    b.add_opl_node(13, "OplGenerationContext", (520, 700), (380, 420), 12,
+                   overrides={
+                       "model_name": "v1-5-pruned-emaonly.safetensors",
+                       "sampler": "euler", "scheduler": "normal",
+                       "seed": 7, "steps": 20, "cfg": 7.0,
+                       "positive_text": POSITIVE,
+                       "negative_text": NEGATIVE,
+                   })
+    b.add_opl_node(14, "OplOutputBinder", (1240, 300), (380, 220), 13)
+    b.add_opl_node(15, "OplHumanApprovalGate", (1020, 1460), (420, 420), 14)
+    b.add_opl_node(16, "OplGraphAttestor", (1540, 1700), (420, 150), 15)
+    b.add_opl_node(17, "OplDecisionSealer", (1540, 1100), (420, 260), 16,
+                   overrides={"ledger_path": LEDGER})
+    b.add_opl_node(18, "OplAuditLedgerWriter", (2040, 900), (380, 170), 17,
+                   overrides={"ledger_path": LEDGER})
+    b.add_opl_node(19, "OplDecisionCardRenderer", (2040, 1140), (380, 230), 18)
+    b.add_core_preview_image(20, (2480, 1120), (380, 340), 19)
+    b.add_opl_node(21, "OplChainValidator", (2480, 880), (380, 170), 20,
+                   overrides={"ledger_path": LEDGER})
+    b.add_opl_node(22, "OplTextDisplay", (1540, 1420), (420, 250), 21)
+    b.add_opl_node(23, "OplPassportExporter", (2040, 1420), (380, 190), 22,
+                   overrides={"ledger_path": LEDGER})
+
+    # Generation wiring.
+    b.link(1, 0, 5, "model")
+    b.link(1, 1, 2, "clip")
+    b.link(1, 1, 3, "clip")
+    b.link(1, 2, 6, "vae")
+    b.link(2, 0, 5, "positive")
+    b.link(3, 0, 5, "negative")
+    b.link(4, 0, 5, "latent_image")
+    b.link(5, 0, 6, "samples")
+    b.link(6, 0, 7, "images")
+    b.link(6, 0, 14, "image")          # generated image -> output binder
+
+    # Decision wiring.
+    b.link(8, 0, 12, "task")
+    b.link(8, 0, 15, "task")
+    b.link(8, 0, 17, "task")
+    b.link(9, 0, 11, "evidence_1")
+    b.link(10, 0, 11, "evidence_2")
+    b.link(11, 0, 12, "bundle")
+    b.link(11, 0, 15, "bundle")
+    b.link(11, 0, 17, "bundle")
+    b.link(14, 0, 15, "output")        # bound output -> gate
+    b.link(12, 0, 17, "policy_result")
+    b.link(15, 0, 17, "approval")
+    b.link(14, 0, 17, "output")        # bound output -> sealer
+    b.link(16, 0, 17, "graph")         # structure attestation -> sealer
+    b.link(13, 0, 17, "generation")    # generation context -> sealer
+    b.link(17, 0, 18, "record")
+    b.link(17, 0, 19, "record")
+    b.link(17, 0, 23, "record")
+    b.link(19, 0, 20, "images")
+    b.link(18, 2, 21, "run_after")
+    b.link(18, 2, 23, "run_after")     # writer record_hash -> exporter order
+    b.link(15, 2, 22, "text")
+
+    b.group("GENERATION", (40, 20, 1180, 840), "#1a1f29")
+    b.group("DECISION LAYER", (40, 860, 1460, 1220), "#0b2231")
+    b.group("SEAL AND VERIFY", (1520, 840, 1360, 1080), "#062a21")
+    return b.to_json()
+
+
 def main():
-    wf = build()
     out_dir = os.path.join(ROOT, "workflows")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "oplogica_payment_demo.json")
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(wf, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    print("Wrote %s (%d nodes, %d links, %d groups)" % (
-        out_path, len(wf["nodes"]), len(wf["links"]), len(wf["groups"])))
+    for name, wf in (("oplogica_payment_demo.json", build()),
+                     ("oplogica_image_demo.json", build_image_demo())):
+        out_path = os.path.join(out_dir, name)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(wf, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        print("Wrote %s (%d nodes, %d links, %d groups)" % (
+            out_path, len(wf["nodes"]), len(wf["links"]),
+            len(wf["groups"])))
 
 
 if __name__ == "__main__":

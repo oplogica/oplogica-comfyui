@@ -1,0 +1,2 @@
+python3 oplogica_core.py verify 03_wrong_key/ledger.jsonl demo_key_wrong_PUBLIC.txt
+-> CHAIN INVALID with SIGNATURE_INVALID on both records (exit 1)

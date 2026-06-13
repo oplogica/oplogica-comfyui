@@ -1,10 +1,10 @@
 {
   "schema": "oplogica.decision_record.v1",
-  "record_id": "bd86b14a-bcae-4de2-aef1-11c0438882f1",
-  "created_at": "2026-06-12T16:44:33Z",
+  "record_id": "117ffed3-dc7a-4afa-835d-30c063498744",
+  "created_at": "2026-06-12T20:40:52Z",
   "environment": {
     "producer": "oplogica-comfyui",
-    "pack_version": "1.0.0"
+    "pack_version": "1.1.0"
   },
   "task": {
     "actor": "finops-agent-07",
@@ -18,12 +18,12 @@
     },
     "risk_hint": "medium",
     "schema": "oplogica.task.v1",
-    "task_id": "4d8dc754-ccf6-46e8-8b2a-a51370611465",
-    "created_at": "2026-06-12T16:44:33Z",
+    "task_id": "df3ba3d4-cc8c-4dfd-b2e2-1fa892e8430a",
+    "created_at": "2026-06-12T20:40:52Z",
     "task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c"
   },
   "evidence": {
-    "merkle_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+    "merkle_root": "29172c8f55f490ff72792bc0e85e43128d4a1717c79b89219d4f59adcbb1e9d8",
     "stats": {
       "item_count": 2,
       "unique_count": 2,
@@ -40,12 +40,12 @@
         "content_sha256": "3cca9a2024587c947ca888ea845e11a6ca6d912519e377a423950c8573b225fc",
         "content_chars": 93,
         "excerpt": "Acme Cloud invoice INV-2291. Amount due: 1840.00 USD. Service period: May 2026. Status: open.",
-        "collected_at": "2026-06-12T16:44:33Z",
+        "collected_at": "2026-06-12T20:40:52Z",
         "age_days": 0.0,
         "fresh": true,
         "complete": true,
         "missing": [],
-        "item_hash": "f6cb7b95e555f9223950d3864fe303370bef4afdeb7224a8fe4d2085ec965d00"
+        "item_hash": "70197b80b9761b43f46e7c20c4f856f779cc0bd0afa8078375da80980efd7a48"
       },
       {
         "item_id": "EV-02",
@@ -54,12 +54,12 @@
         "content_sha256": "610694095fe7e0c0f13db61be82bb01e62f09dace5e7a265d34af89ad07f6ca0",
         "content_chars": 106,
         "excerpt": "Master services agreement ACME-2024-118, active through 2026-12-31, monthly cloud infrastructure",
-        "collected_at": "2026-06-12T16:44:33Z",
+        "collected_at": "2026-06-12T20:40:52Z",
         "age_days": 0.0,
         "fresh": true,
         "complete": true,
         "missing": [],
-        "item_hash": "d255b20865205f5f60fdcef9b8e29362572651418dec8c05462bed3ecc02bb6a"
+        "item_hash": "d7ad7429f802f3c8a64c0c23a1f60597c86fb29ca164f2eaa116a6509760e0c6"
       }
     ]
   },
@@ -121,28 +121,33 @@
       ],
       "passed": true,
       "requires_human": true,
-      "evaluated_at": "2026-06-12T16:44:33Z"
+      "evaluated_at": "2026-06-12T20:40:52Z"
     }
   },
   "approvals": [
     {
-      "schema": "oplogica.approval.v2",
+      "schema": "oplogica.approval.v3",
       "gate": "human_approval_gate.v2",
       "decision": "APPROVED",
       "effective_decision": "APPROVED",
       "downgrade_reason": null,
       "approver": "m.ibrahim",
       "note": "Invoice matches contract ACME-2024-118. Amount within policy.",
-      "approved_at": "2026-06-12T16:44:33Z",
+      "approved_at": "2026-06-12T20:40:52Z",
       "bound_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
-      "bound_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "bound_evidence_root": "29172c8f55f490ff72792bc0e85e43128d4a1717c79b89219d4f59adcbb1e9d8",
       "current_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
-      "current_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "current_evidence_root": "29172c8f55f490ff72792bc0e85e43128d4a1717c79b89219d4f59adcbb1e9d8",
       "expected_task_hash": "20901739c1574c6d71c0b063623b8134dde2220069d486fe50495c4048fc746c",
-      "expected_evidence_root": "a4bcb135b4a428a0dd5939fba65f544d8990c35cccc2a76130b45990e53800e9",
+      "expected_evidence_root": "29172c8f55f490ff72792bc0e85e43128d4a1717c79b89219d4f59adcbb1e9d8",
+      "bound_output_hash": "25febda63567fe794e5948c27819a388567a75dccf328781a501de06f7989958",
+      "current_output_hash": "25febda63567fe794e5948c27819a388567a75dccf328781a501de06f7989958",
+      "expected_output_hash": "25febda63567fe794e5948c27819a388567a75dccf328781a501de06f7989958",
+      "output_binding": "enforced",
       "binding_mode": "strict",
       "task_binding_ok": true,
       "evidence_binding_ok": true,
+      "output_binding_ok": true,
       "binding_ok": true
     }
   ],
@@ -155,8 +160,18 @@
   "chain": {
     "prev_record_hash": "GENESIS"
   },
+  "output": {
+    "schema": "oplogica.output.v1",
+    "output_kind": "text",
+    "output_hash": "25febda63567fe794e5948c27819a388567a75dccf328781a501de06f7989958",
+    "summary": {
+      "length": 39,
+      "excerpt": "PAY Acme Cloud 1840.00 USD ref INV-2291"
+    },
+    "bound_at": "2026-06-12T20:40:52Z"
+  },
   "integrity": {
-    "record_hash": "5a4c037e7db109a6af149794e11b9aa9c3d8778837db2530d8e1244135815743",
+    "record_hash": "1073029701175b93c00b223df894c53212e33ee560dda9e7ed1bc715566c9958",
     "signature": null
   }
 }

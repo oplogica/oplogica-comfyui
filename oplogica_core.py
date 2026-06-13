@@ -26,11 +26,15 @@ SCHEMA_RECORD = "oplogica.decision_record.v1"
 SCHEMA_TASK = "oplogica.task.v1"
 SCHEMA_EVIDENCE = "oplogica.evidence_item.v1"
 SCHEMA_BUNDLE = "oplogica.evidence_bundle.v1"
-SCHEMA_APPROVAL = "oplogica.approval.v2"
+SCHEMA_APPROVAL = "oplogica.approval.v3"
 SCHEMA_POLICY_RESULT = "oplogica.policy_result.v1"
+SCHEMA_OUTPUT = "oplogica.output.v1"
+SCHEMA_GRAPH = "oplogica.workflow_attestation.v1"
+SCHEMA_GENERATION = "oplogica.generation_context.v1"
+SCHEMA_PASSPORT = "oplogica.passport.v1"
 
 GENESIS = "GENESIS"
-PACK_VERSION = "1.0.0"
+PACK_VERSION = "1.1.0"
 
 INTEGRITY_SCOPE = (
     "Tamper-evident record. Integrity is not truth: this record does not "
@@ -128,13 +132,33 @@ def load_hmac_key(path: str):
     """Load raw key bytes from a file. Returns (key, key_id) or None.
 
     key_id is the first 12 hex chars of SHA-256(key), safe to publish.
+
+    Path resolution: an absolute path is used as-is. A relative path is
+    tried against the current directory first (the CLI case), then against
+    the ComfyUI output directory when available (the node case). A missing
+    file raises a FileNotFoundError that lists every path that was tried.
     """
     if not path or not path.strip():
         return None
     p = path.strip()
-    if not os.path.isfile(p):
-        raise FileNotFoundError(f"HMAC key file not found: {p}")
-    with open(p, "rb") as f:
+    tried = []
+    if os.path.isabs(p):
+        candidates = [p]
+    else:
+        candidates = [os.path.abspath(p), resolve_output_path(p)]
+    resolved = None
+    for cand in candidates:
+        tried.append(cand)
+        if os.path.isfile(cand):
+            resolved = cand
+            break
+    if resolved is None:
+        raise FileNotFoundError(
+            "HMAC key file not found. Tried: %s. Relative paths resolve "
+            "from the current directory first, then from the ComfyUI "
+            "output directory; absolute paths are used as-is."
+            % "; ".join(tried))
+    with open(resolved, "rb") as f:
         key = f.read()
     if len(key) < 16:
         raise ValueError("HMAC key must be at least 16 bytes")
@@ -254,10 +278,14 @@ def compute_record_hash(record: dict) -> str:
 
 def seal_record(task: dict, evidence_summary: dict, checks: dict,
                 approvals: list, verdict: dict, prev_hash: str,
-                signer=None) -> dict:
+                signer=None, output: dict = None, workflow: dict = None,
+                generation: dict = None) -> dict:
     """Assemble and seal a decision record.
 
     signer: optional (key_bytes, key_id) tuple for HMAC signing.
+    output, workflow, generation: optional record sections (v1.1.0,
+    additive). Records without them remain fully valid; the chain format
+    is unchanged and v1.0.0 ledgers verify exactly as before.
     """
     record = {
         "schema": SCHEMA_RECORD,
@@ -275,6 +303,12 @@ def seal_record(task: dict, evidence_summary: dict, checks: dict,
         "scope": INTEGRITY_SCOPE,
         "chain": {"prev_record_hash": prev_hash or GENESIS},
     }
+    if output is not None:
+        record["output"] = output
+    if workflow is not None:
+        record["workflow"] = workflow
+    if generation is not None:
+        record["generation"] = generation
     record_hash = compute_record_hash(record)
     signature = None
     if signer is not None:
@@ -282,6 +316,185 @@ def seal_record(task: dict, evidence_summary: dict, checks: dict,
         signature = hmac_sign(record_hash, key, key_id)
     record["integrity"] = {"record_hash": record_hash, "signature": signature}
     return record
+
+
+GRAPH_REVIEW_CHANNEL_CLASSES = ("OplHumanApprovalGate",)
+
+
+def canonical_graph_hash(prompt: dict, exclude_classes=GRAPH_REVIEW_CHANNEL_CLASSES):
+    """Deterministic hash of a ComfyUI API-format graph (the PROMPT dict:
+    {node_id: {"class_type": str, "inputs": {...values or [src_id, slot]...}}}).
+
+    The hash covers every node, every connection, and every widget value
+    EXCEPT the widget values of the classes in exclude_classes. The Human
+    Approval Gate is excluded by default because its fields (decision,
+    approver, note, strict expectations) are the designated mutable review
+    channel of the two-pass flow: pasting the reviewed hashes in pass 2
+    must not change the attested structure. Connections INTO and OUT OF
+    excluded nodes still count: rewiring the gate changes the hash.
+
+    Returns (graph_hash, node_count, link_count).
+    """
+    nodes = {}
+    link_count = 0
+    for nid, node in (prompt or {}).items():
+        if not isinstance(node, dict):
+            continue
+        ctype = node.get("class_type", "")
+        entry = {"class_type": ctype, "links": {}, "widgets": {}}
+        for name, val in (node.get("inputs") or {}).items():
+            if (isinstance(val, list) and len(val) == 2
+                    and isinstance(val[1], int)):
+                entry["links"][name] = [str(val[0]), val[1]]
+                link_count += 1
+            elif ctype not in exclude_classes:
+                entry["widgets"][name] = val
+        nodes[str(nid)] = entry
+    graph_hash = hash_obj({"schema": SCHEMA_GRAPH, "nodes": nodes})
+    return graph_hash, len(nodes), link_count
+
+
+# ---------------------------------------------------------------------------
+# Decision passport: portable, locally verifiable evidence bundle
+# ---------------------------------------------------------------------------
+
+def record_canonical_body(record: dict) -> str:
+    """Canonical JSON of the record body (everything except integrity)."""
+    body = {k: v for k, v in record.items() if k != "integrity"}
+    return canonical_json(body)
+
+
+def build_passport(ledger_path: str, selector=None) -> dict:
+    """Build a portable passport for one record of a ledger.
+
+    selector: None (tail record), an int position, or a record_hash prefix.
+    The passport embeds the record, its canonical body string, and the
+    predecessor record (when any) so chain linkage is verifiable offline
+    by the CLI or by the bundled verifier.html, without the full ledger.
+    """
+    records = ledger_read(ledger_path)
+    if not records:
+        raise ValueError("ledger is empty or missing: %s" % ledger_path)
+    index = None
+    if selector is None:
+        index = len(records) - 1
+    else:
+        sel = str(selector)
+        if sel.isdigit() and int(sel) < len(records):
+            index = int(sel)
+        else:
+            for i, rec in enumerate(records):
+                rh = (rec.get("integrity", {}) or {}).get("record_hash", "")
+                if rh.startswith(sel):
+                    index = i
+                    break
+    if index is None:
+        raise ValueError("no record matches selector %r" % (selector,))
+    record = records[index]
+    prev_record = records[index - 1] if index > 0 else None
+    passport = {
+        "passport_schema": SCHEMA_PASSPORT,
+        "pack_version": PACK_VERSION,
+        "created_at": utc_now_iso(),
+        "scope": INTEGRITY_SCOPE,
+        "record": record,
+        "record_canonical_body": record_canonical_body(record),
+        "chain_context": {
+            "position": index,
+            "ledger_length": len(records),
+            "prev_record": prev_record,
+            "prev_record_canonical_body": (
+                record_canonical_body(prev_record) if prev_record else None),
+        },
+        "verification": {
+            "cli": "python3 oplogica_core.py verify-passport <passport.json> "
+                   "[hmac_key_file]",
+            "local_html": "open verifier/verifier.html and load this file",
+            "note": "Verification proves internal consistency and, with the "
+                    "key, HMAC integrity plus key possession. It does not "
+                    "prove the decision was correct, fair, or legally "
+                    "sufficient.",
+        },
+    }
+    return passport
+
+
+def verify_passport(passport: dict, key: bytes = None) -> dict:
+    """Deterministic local verification of a decision passport.
+
+    Returns {"valid": bool, "checks": [{"name", "passed", "detail"}, ...]}.
+    """
+    checks = []
+
+    def add(name, passed, detail=""):
+        checks.append({"name": name, "passed": bool(passed), "detail": detail})
+
+    record = passport.get("record") or {}
+    body_str = passport.get("record_canonical_body") or ""
+    integ = record.get("integrity", {}) or {}
+    stored_hash = integ.get("record_hash", "")
+
+    recomputed_body = record_canonical_body(record)
+    add("canonical_parity", body_str == recomputed_body,
+        "embedded canonical body matches local recomputation")
+    add("record_hash", sha256_hex(body_str) == stored_hash and bool(stored_hash),
+        "SHA-256 of canonical body equals integrity.record_hash")
+
+    approvals = record.get("approvals") or [{}]
+    ap = approvals[0] if approvals else {}
+    task_hash = (record.get("task") or {}).get("task_hash")
+    evid_root = (record.get("evidence") or {}).get("merkle_root")
+    add("approval_task_binding", ap.get("bound_task_hash") == task_hash,
+        "approval bound task hash equals sealed task hash")
+    add("approval_evidence_binding",
+        ap.get("bound_evidence_root") == evid_root,
+        "approval bound evidence root equals sealed evidence root")
+    if ap.get("bound_output_hash") or record.get("output"):
+        out_hash = (record.get("output") or {}).get("output_hash")
+        add("approval_output_binding",
+            ap.get("bound_output_hash") == out_hash,
+            "approval bound output hash equals sealed output hash")
+
+    ctx = passport.get("chain_context") or {}
+    prev = ctx.get("prev_record")
+    declared_prev = (record.get("chain") or {}).get("prev_record_hash")
+    if prev:
+        prev_body = ctx.get("prev_record_canonical_body") or ""
+        add("prev_canonical_parity",
+            prev_body == record_canonical_body(prev),
+            "embedded predecessor canonical body matches recomputation")
+        prev_hash = (prev.get("integrity", {}) or {}).get("record_hash", "")
+        add("prev_record_hash",
+            sha256_hex(prev_body) == prev_hash and bool(prev_hash),
+            "predecessor record hash recomputes")
+        add("chain_link", declared_prev == prev_hash,
+            "record links to embedded predecessor")
+    else:
+        position = ctx.get("position")
+        if declared_prev == GENESIS:
+            add("chain_link", position in (0, None),
+                "first record: declares GENESIS, no predecessor required"
+                if position in (0, None) else
+                "record declares GENESIS but the passport claims chain "
+                "position %r; a first record must be at position 0"
+                % (position,))
+        else:
+            add("chain_link", False,
+                "record declares predecessor %s but the passport embeds "
+                "no predecessor; chain linkage cannot be verified from "
+                "this passport. Re-export after the Audit Ledger Writer "
+                "has run (wire writer record_hash into the exporter's "
+                "run_after input)." % short_hash(declared_prev or ""))
+
+    sig = integ.get("signature")
+    if key is not None:
+        if sig:
+            add("hmac_signature", hmac_verify(stored_hash, sig, key),
+                "HMAC-SHA256 verifies with the provided key")
+        else:
+            add("hmac_signature", False, "key provided but record is unsigned")
+    valid = all(c["passed"] for c in checks)
+    return {"valid": valid, "checks": checks}
 
 
 def validate_chain(records, key: bytes = None) -> dict:
@@ -449,9 +662,47 @@ def _cli(argv):
         for w in result["warnings"]:
             print(f"  WARN   record[{w['index']}] {w['code']}: {w['detail']}")
         return 0 if result["valid"] else 1
-    print("usage: python oplogica_core.py verify <ledger.jsonl> [hmac_key_file]")
+    if len(argv) >= 2 and argv[0] == "passport":
+        ledger = argv[1]
+        selector = argv[2] if len(argv) >= 3 and not argv[2].startswith("-") else None
+        out_path = None
+        if "-o" in argv:
+            out_path = argv[argv.index("-o") + 1]
+        passport = build_passport(ledger, selector)
+        text = json.dumps(passport, ensure_ascii=False, indent=2)
+        if out_path:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+            rh = passport["record"]["integrity"]["record_hash"]
+            print(f"[Oplogica] PASSPORT WRITTEN | record={short_hash(rh)} "
+                  f"| position={passport['chain_context']['position']} "
+                  f"-> {out_path}")
+        else:
+            print(text)
+        return 0
+    if len(argv) >= 2 and argv[0] == "verify-passport":
+        with open(argv[1], "r", encoding="utf-8") as f:
+            passport = json.load(f)
+        key = None
+        if len(argv) >= 3:
+            loaded = load_hmac_key(argv[2])
+            key = loaded[0] if loaded else None
+        result = verify_passport(passport, key=key)
+        status = "PASSPORT VALID" if result["valid"] else "PASSPORT INVALID"
+        print(f"[Oplogica] {status} | checks={len(result['checks'])}")
+        for c in result["checks"]:
+            mark = "ok " if c["passed"] else "FAIL"
+            print(f"  {mark} {c['name']}: {c['detail']}")
+        return 0 if result["valid"] else 1
+    print("usage: python oplogica_core.py verify <ledger.jsonl> [hmac_key_file]\n"
+          "       python oplogica_core.py passport <ledger.jsonl> [position|hash_prefix] [-o out.json]\n"
+          "       python oplogica_core.py verify-passport <passport.json> [hmac_key_file]")
     return 2
 
 
 if __name__ == "__main__":
-    sys.exit(_cli(sys.argv[1:]))
+    try:
+        sys.exit(_cli(sys.argv[1:]))
+    except BrokenPipeError:
+        # Output piped to a consumer that closed early (e.g. head).
+        sys.exit(0)

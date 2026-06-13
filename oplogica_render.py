@@ -169,6 +169,17 @@ def render_card(record: dict, width: int = 1200, height: int = 675):
     if issues:
         d.text((m, y), " | ".join(issues), font=f_small, fill="#F59E0B")
         y += s(22)
+    out_sec = record.get("output")
+    wf_sec = record.get("workflow")
+    bind_bits = []
+    if out_sec:
+        bind_bits.append(f"output {short_hash(out_sec.get('output_hash', ''))}")
+    if wf_sec and wf_sec.get("graph_hash"):
+        tag = "" if wf_sec.get("match", True) else " (CHANGED)"
+        bind_bits.append(f"graph {short_hash(wf_sec['graph_hash'])}{tag}")
+    if bind_bits:
+        d.text((m, y), "   ".join(bind_bits), font=f_mono, fill=TEXT_SOFT)
+        y += s(22)
     y += s(8)
 
     # CHECKS

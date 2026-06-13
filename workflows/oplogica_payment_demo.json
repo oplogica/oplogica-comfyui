@@ -1,6 +1,6 @@
 {
-  "last_node_id": 12,
-  "last_link_id": 15,
+  "last_node_id": 14,
+  "last_link_id": 18,
   "nodes": [
     {
       "id": 1,
@@ -46,7 +46,9 @@
         "USD",
         "{\"vendor\": \"Acme Cloud\", \"invoice\": \"INV-2291\"}",
         "medium"
-      ]
+      ],
+      "color": "#2F4368",
+      "bgcolor": "#161E2E"
     },
     {
       "id": 2,
@@ -81,7 +83,9 @@
         "https://billing.example.com/INV-2291",
         "Acme Cloud invoice INV-2291. Amount due: 1840.00 USD. Service period: May 2026. Status: open.",
         ""
-      ]
+      ],
+      "color": "#14467F",
+      "bgcolor": "#0C2440"
     },
     {
       "id": 3,
@@ -116,7 +120,9 @@
         "https://contracts.example.com/ACME-2024-118",
         "Master services agreement ACME-2024-118, active through 2026-12-31, monthly cloud infrastructure services.",
         ""
-      ]
+      ],
+      "color": "#14467F",
+      "bgcolor": "#0C2440"
     },
     {
       "id": 4,
@@ -184,7 +190,9 @@
       "widgets_values": [
         90,
         true
-      ]
+      ],
+      "color": "#14467F",
+      "bgcolor": "#0C2440"
     },
     {
       "id": 5,
@@ -239,7 +247,9 @@
       },
       "widgets_values": [
         "{\n  \"policy_id\": \"OPL-PAY-001\",\n  \"version\": \"1.0.0\",\n  \"allowed_actions\": [\n    \"payment.vendor\",\n    \"refund.customer\"\n  ],\n  \"limits\": {\n    \"max_amount\": 5000,\n    \"currency\": \"USD\"\n  },\n  \"evidence\": {\n    \"min_items\": 2,\n    \"max_age_days\": 90,\n    \"require_source\": true\n  },\n  \"sensitive_patterns\": [\n    \"delete\",\n    \"transfer.external\",\n    \"credentials\"\n  ],\n  \"required_approvals\": 1\n}"
-      ]
+      ],
+      "color": "#5B21B6",
+      "bgcolor": "#26104A"
     },
     {
       "id": 6,
@@ -265,6 +275,11 @@
           "name": "bundle",
           "type": "OPL_BUNDLE",
           "link": 7
+        },
+        {
+          "name": "output",
+          "type": "OPL_OUTPUT",
+          "link": null
         }
       ],
       "outputs": [
@@ -299,8 +314,11 @@
         "",
         "",
         "",
+        "",
         ""
-      ]
+      ],
+      "color": "#8C5400",
+      "bgcolor": "#3A2400"
     },
     {
       "id": 7,
@@ -336,6 +354,21 @@
           "name": "approval",
           "type": "OPL_APPROVAL",
           "link": 10
+        },
+        {
+          "name": "output",
+          "type": "OPL_OUTPUT",
+          "link": null
+        },
+        {
+          "name": "graph",
+          "type": "OPL_GRAPH",
+          "link": 16
+        },
+        {
+          "name": "generation",
+          "type": "OPL_GENERATION",
+          "link": null
         }
       ],
       "outputs": [
@@ -344,7 +377,8 @@
           "type": "OPL_RECORD",
           "links": [
             11,
-            12
+            12,
+            17
           ],
           "slot_index": 0
         },
@@ -373,7 +407,9 @@
       "widgets_values": [
         "oplogica/ledger.jsonl",
         ""
-      ]
+      ],
+      "color": "#0B5A3C",
+      "bgcolor": "#06301F"
     },
     {
       "id": 8,
@@ -413,7 +449,8 @@
           "name": "record_hash",
           "type": "STRING",
           "links": [
-            14
+            14,
+            18
           ],
           "slot_index": 2
         },
@@ -429,7 +466,9 @@
       },
       "widgets_values": [
         "oplogica/ledger.jsonl"
-      ]
+      ],
+      "color": "#3D4F66",
+      "bgcolor": "#1D2735"
     },
     {
       "id": 9,
@@ -470,7 +509,9 @@
         675,
         true,
         "oplogica_card"
-      ]
+      ],
+      "color": "#3A4150",
+      "bgcolor": "#1C202A"
     },
     {
       "id": 10,
@@ -546,7 +587,9 @@
       "widgets_values": [
         "oplogica/ledger.jsonl",
         ""
-      ]
+      ],
+      "color": "#0A5C5C",
+      "bgcolor": "#052E2E"
     },
     {
       "id": 12,
@@ -580,7 +623,111 @@
       "properties": {
         "Node name for S&R": "OplTextDisplay"
       },
-      "widgets_values": []
+      "widgets_values": [],
+      "color": "#313D52",
+      "bgcolor": "#171D29"
+    },
+    {
+      "id": 13,
+      "type": "OplGraphAttestor",
+      "pos": [
+        1540,
+        1000
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "graph",
+          "type": "OPL_GRAPH",
+          "links": [
+            16
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "graph_hash",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "OplGraphAttestor"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "color": "#0B5A3C",
+      "bgcolor": "#06301F"
+    },
+    {
+      "id": 14,
+      "type": "OplPassportExporter",
+      "pos": [
+        2020,
+        720
+      ],
+      "size": [
+        380,
+        170
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "record",
+          "type": "OPL_RECORD",
+          "link": 17
+        },
+        {
+          "name": "run_after",
+          "type": "STRING",
+          "link": 18
+        }
+      ],
+      "outputs": [
+        {
+          "name": "passport_path",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 0
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "passport_json",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "OplPassportExporter"
+      },
+      "widgets_values": [
+        "oplogica/ledger.jsonl",
+        "oplogica"
+      ],
+      "color": "#3730A3",
+      "bgcolor": "#181563"
     }
   ],
   "links": [
@@ -703,6 +850,30 @@
       12,
       0,
       "STRING"
+    ],
+    [
+      16,
+      13,
+      0,
+      7,
+      5,
+      "OPL_GRAPH"
+    ],
+    [
+      17,
+      7,
+      0,
+      14,
+      0,
+      "OPL_RECORD"
+    ],
+    [
+      18,
+      8,
+      2,
+      14,
+      1,
+      "STRING"
     ]
   ],
   "groups": [
@@ -782,7 +953,7 @@
   "config": {},
   "extra": {
     "oplogica": {
-      "pack_version": "1.0.0",
+      "pack_version": "1.1.0",
       "scenario": "vendor_payment_demo"
     }
   },

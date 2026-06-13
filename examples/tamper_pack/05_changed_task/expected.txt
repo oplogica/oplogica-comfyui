@@ -1,0 +1,3 @@
+python3 oplogica_core.py verify 05_changed_task/ledger.jsonl
+-> CHAIN VALID (the blocked decision is itself a sealed record)
+record verdict: BLOCKED, reasons include TASK_BINDING_MISMATCH

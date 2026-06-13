@@ -1,11 +1,11 @@
 # Oplogica Visual Decision Operating System
 ## Full Node Catalog and Strategic Architecture
 
-Pack version 1.0.0. Status legend: **MVP** = implemented and tested now,
+Pack version 1.1.0. Status legend: **MVP** = implemented and tested now,
 **P2** = Phase 2 (specified only, NOT implemented), **P3** = Phase 3
 (specified only, NOT implemented).
 
-Hard boundary: exactly 10 nodes are implemented in this package (the rows
+Hard boundary: exactly 14 nodes are implemented in this package (the rows
 marked MVP). Every other row in this document is a design specification
 for future work. Nothing marked P2 or P3 exists as code today, and no
 public claim should describe it as existing.
@@ -26,7 +26,7 @@ layer seals and chains, and the action layer records and publishes.
 
 Custom graph types carry structured dicts between layers:
 `OPL_TASK`, `OPL_EVIDENCE`, `OPL_BUNDLE`, `OPL_CHECK`, `OPL_APPROVAL`,
-`OPL_RECORD`. All are JSON-serializable; nothing hides in object state.
+`OPL_RECORD`, and, since v1.1.0, `OPL_OUTPUT`, `OPL_GRAPH`, `OPL_GENERATION`. All are JSON-serializable; nothing hides in object state.
 
 ## Color system
 
@@ -56,6 +56,7 @@ ships with matching group frames), one loud verdict.
 |---|---|---|---|---|
 | Task Input | Normalizes a requested action (actor, action_type, amount, payload) and computes the semantic `task_hash` everything downstream binds to | widgets in; OPL_TASK + task_hash out | B | MVP |
 | Evidence Item | One claim + source reference + raw content; content is hashed downstream, never embedded in records | widgets in; OPL_EVIDENCE out | B | MVP |
+| Generation Context | v1.1.0: declares model, sampler, scheduler, seed, steps, cfg, and text input hashes (96-char excerpts only, never full text) as a hashed, queryable record section | widgets in; OPL_GENERATION + context_hash out | B | MVP |
 | Agent Request Adapter | Parses a JSON request emitted by an external agent (LangChain, CrewAI, raw API) into OPL_TASK; rejects malformed payloads with a parse record | STRING in; OPL_TASK out | B | P2 |
 | Document Input | Loads a file, captures SHA-256 + metadata as evidence | path widget; OPL_EVIDENCE out | B | P2 |
 | API Request Input | Fetches a URL at run time, records body hash + headers + retrieval time as evidence | widgets; OPL_EVIDENCE out | B | P2 |
@@ -81,7 +82,7 @@ ships with matching group frames), one loud verdict.
 
 | Node | Purpose | I/O | Class | Status |
 |---|---|---|---|---|
-| Human Approval Gate | Task-and-evidence-bound approval: strict mode enforces BOTH strict_expected_task_hash and strict_expected_evidence_root against the current task and bundle; APPROVED is downgraded with TASK_BINDING_MISMATCH, EVIDENCE_BINDING_MISMATCH, APPROVAL_BINDING_MISMATCH, or NO_APPROVER_IDENTITY; bundle input is required | OPL_TASK + OPL_BUNDLE in; OPL_APPROVAL out | B | MVP |
+| Human Approval Gate | Task-and-evidence-bound approval: strict mode enforces strict_expected_task_hash and strict_expected_evidence_root against the current task and bundle, and since v1.1.0 optionally strict_expected_output_hash against a wired OPL_OUTPUT; APPROVED is downgraded with TASK_BINDING_MISMATCH, EVIDENCE_BINDING_MISMATCH, APPROVAL_BINDING_MISMATCH, OUTPUT_BINDING_MISMATCH, or NO_APPROVER_IDENTITY; bundle input is required | OPL_TASK + OPL_BUNDLE (+ optional OPL_OUTPUT) in; OPL_APPROVAL out | B | MVP |
 | Blocking Approval Gate | True mid-run pause: frontend dialog + threading.Event (the technique proven by community "image chooser" nodes); times out to PENDING | same as above | C | P2 |
 | Dual Approval Gate | Requires two distinct approver identities; same person twice = downgrade | 2x OPL_APPROVAL in; OPL_APPROVAL out | B | P2 |
 | Risk Threshold Gate | Routes by amount/risk_hint: below threshold passes with auto-record, above requires the human gate | OPL_TASK in; OPL_CHECK out | B | P2 |
@@ -104,8 +105,10 @@ ships with matching group frames), one loud verdict.
 
 | Node | Purpose | I/O | Class | Status |
 |---|---|---|---|---|
-| Decision Sealer | Computes the verdict (APPROVED only if policy passed AND effective approval APPROVED AND the approval's bound task hash and bound evidence root match the sealed task and bundle AND an approver identity exists; else BLOCKED with explicit reason codes), assembles the record, canonical-JSON SHA-256 record hash, chains to ledger tail, optional HMAC | task+bundle+check+approval in; OPL_RECORD + verdict + hash + json out | B | MVP (folds Hash Generator, Record Builder, Signature Generator) |
+| Decision Sealer | Computes the verdict (APPROVED only if policy passed AND effective approval APPROVED AND the approval's bound task hash and bound evidence root match the sealed task and bundle AND an approver identity exists; else BLOCKED with explicit reason codes), assembles the record with optional output, workflow, and generation sections (v1.1.0), re-verifies output binding (OUTPUT_BINDING_MISMATCH) and structure attestation (WORKFLOW_BINDING_MISMATCH) at seal time, canonical-JSON SHA-256 record hash, chains to ledger tail, optional HMAC | task+bundle+check+approval (+ optional output/graph/generation) in; OPL_RECORD + verdict + hash + json out | B | MVP (folds Hash Generator, Record Builder, Signature Generator) |
 | Chain Validator | Re-reads the ledger; recomputes every hash, every prev-link, every HMAC; reports HASH_MISMATCH / CHAIN_BREAK / SIGNATURE_INVALID per record | path widgets; valid + report + length out | B | MVP |
+| Output Binder | v1.1.0: binds the produced artifact (IMAGE, text, or file) into the decision surface by content hash; image hashing is over raw 8-bit RGB bytes with a dimension header, independent of PNG encoder settings | IMAGE or widgets in; OPL_OUTPUT + output_hash + report out | B | MVP |
+| Workflow Attestor | v1.1.0: hashes the executing graph from the hidden PROMPT (every node, link, and widget value except the approval gate's own review fields); with expected_graph_hash set, a structure change blocks at seal time | hidden PROMPT + widget in; OPL_GRAPH + graph_hash + report out | B | MVP |
 | Hash Generator | Standalone canonical-JSON SHA-256 of any payload | any in; STRING out | B | P2 |
 | Merkle Builder | Standalone Merkle root over arbitrary hash lists | list in; STRING out | B | P2 |
 | Signature Generator (Ed25519) | Asymmetric signing: private key signs, anyone verifies with the public key; actual non-repudiation | OPL_RECORD in; OPL_RECORD out | B | P2 |
@@ -117,6 +120,7 @@ ships with matching group frames), one loud verdict.
 | Node | Purpose | I/O | Class | Status |
 |---|---|---|---|---|
 | Audit Ledger Writer | Appends the sealed record to append-only JSONL; idempotent against immediate duplicates | OPL_RECORD in; path + position + hash + status out | B | MVP |
+| Passport Exporter | v1.1.0: exports a portable decision passport (record, canonical body, predecessor, chain position) verifiable offline by the CLI or by verifier/verifier.html | OPL_RECORD + path widgets in; path + status + json out | B | MVP |
 | Decision Card Renderer | 1200x675 dark card (verdict pill, task, evidence root, policy, bound approval, chain, scope line); the LinkedIn asset is generated by the system itself | OPL_RECORD in; IMAGE out | B | MVP |
 | Guarded Executor | Executes a webhook/command ONLY if the connected record's verdict is APPROVED; refusal emits a refusal record | OPL_RECORD in; OPL_RESULT out | B | P2 |
 | Request More Evidence | Emits a structured evidence request (which checks failed, what is needed) as a record | OPL_CHECK in; OPL_RECORD out | B | P2 |

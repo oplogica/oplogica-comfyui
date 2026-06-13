@@ -13,15 +13,37 @@
 import { app } from "../../scripts/app.js";
 import { ComfyWidgets } from "../../scripts/widgets.js";
 
-// Layer palette. Keys are category prefixes, values are [header, body].
+// Per-node palette: [header, body]. Headers are dark, saturated hues so
+// the light title text stays clearly readable in dark mode; bodies are
+// the same hue, darker. This map mirrors OPL_NODE_COLORS in nodes.py
+// (the single source of truth; a test keeps the two in sync). No node
+// may look disabled unless it is.
+const OPLOGICA_NODE_COLORS = {
+    "OplTaskInput":            ["#2F4368", "#161E2E"],
+    "OplEvidenceItem":         ["#14467F", "#0C2440"],
+    "OplGenerationContext":    ["#2F4368", "#161E2E"],
+    "OplEvidenceCollector":    ["#14467F", "#0C2440"],
+    "OplPolicyCheck":          ["#5B21B6", "#26104A"],
+    "OplHumanApprovalGate":    ["#8C5400", "#3A2400"],
+    "OplDecisionSealer":       ["#0B5A3C", "#06301F"],
+    "OplOutputBinder":         ["#0B5A3C", "#06301F"],
+    "OplGraphAttestor":        ["#0B5A3C", "#06301F"],
+    "OplChainValidator":       ["#0A5C5C", "#052E2E"],
+    "OplAuditLedgerWriter":    ["#3D4F66", "#1D2735"],
+    "OplDecisionCardRenderer": ["#3A4150", "#1C202A"],
+    "OplPassportExporter":     ["#3730A3", "#181563"],
+    "OplTextDisplay":          ["#313D52", "#171D29"],
+};
+
+// Category fallback for any future Oplogica node not yet in the map.
 const OPLOGICA_LAYER_COLORS = {
-    "Oplogica/1 Input":        ["#475569", "#141a22"],
-    "Oplogica/2 Evidence":     ["#0369A1", "#0b2231"],
-    "Oplogica/3 Approval":     ["#B45309", "#2a1a07"],
-    "Oplogica/4 Verification": ["#7C3AED", "#221038"],
-    "Oplogica/5 Trust":        ["#059669", "#062a21"],
-    "Oplogica/6 Action":       ["#6B7280", "#1a1f29"],
-    "Oplogica/Utility":        ["#334155", "#10151c"],
+    "Oplogica/1 Input":        ["#2F4368", "#161E2E"],
+    "Oplogica/2 Evidence":     ["#14467F", "#0C2440"],
+    "Oplogica/3 Approval":     ["#8C5400", "#3A2400"],
+    "Oplogica/4 Verification": ["#5B21B6", "#26104A"],
+    "Oplogica/5 Trust":        ["#0B5A3C", "#06301F"],
+    "Oplogica/6 Action":       ["#3D4F66", "#1D2735"],
+    "Oplogica/Utility":        ["#313D52", "#171D29"],
 };
 
 function layerColorsFor(category) {
@@ -38,7 +60,8 @@ app.registerExtension({
     name: "oplogica.decision.os",
 
     async beforeRegisterNodeDef(nodeType, nodeData, appRef) {
-        const colors = layerColorsFor(nodeData?.category);
+        const colors = OPLOGICA_NODE_COLORS[nodeData?.name]
+            || layerColorsFor(nodeData?.category);
 
         if (colors) {
             const [headerColor, bodyColor] = colors;

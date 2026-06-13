@@ -4,7 +4,7 @@ Oplogica Visual Decision Operating System for ComfyUI.
 Registers the Oplogica node pack and exposes the web extension directory
 used for layer-based node coloring and the text display widget.
 
-Pack version: 1.0.0
+Pack version: 1.1.0
 """
 
 try:
